@@ -1,8 +1,5 @@
 import type { AiFeedback, AppState, ChatMessage, DailyReport, SkillArea } from "./types";
 
-const SYSTEM_PROMPT =
-  "你是一个亲和、耐心的英语学习教练。你只能使用中文和英语。中文用于解释和鼓励，英语用于例句、对话、正确表达和练习。不要输出其他语言。反馈要简洁、具体、温和。";
-
 const fallbackByArea: Record<SkillArea, AiFeedback> = {
   vocabulary: {
     score: 78,
@@ -54,18 +51,14 @@ const fallbackByArea: Record<SkillArea, AiFeedback> = {
   },
 };
 
-export async function requestAiFeedback(
-  apiKey: string,
-  area: SkillArea,
-  userInput: string,
-  context: string,
-): Promise<AiFeedback> {
+export async function requestAiFeedback(area: SkillArea, userInput: string, context: string): Promise<AiFeedback> {
   try {
     const response = await fetch("/api/ai/feedback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ apiKey, area, userInput, context }),
+      body: JSON.stringify({ area, userInput, context }),
     });
+
     if (response.ok) {
       const data = await response.json();
       return {
@@ -76,93 +69,33 @@ export async function requestAiFeedback(
       };
     }
   } catch {
-    // fall through to local fallback
+    // Cloud AI is optional. Local fallback keeps practice usable.
   }
 
-  if (!apiKey.trim()) return fallbackByArea[area];
-
-  try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4.1-mini",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          {
-            role: "user",
-            content:
-              `练习类型：${area}\n上下文：${context}\n用户回答：${userInput}\n` +
-              "请返回 JSON：score, summary, corrections, reviewItems。reviewItems 每项包含 area,title,prompt,answer,note,errorCount,confidence。",
-          },
-        ],
-        response_format: { type: "json_object" },
-      }),
-    });
-
-    if (!response.ok) return fallbackByArea[area];
-    const data = await response.json();
-    const parsed = JSON.parse(data.choices?.[0]?.message?.content ?? "{}");
-    return {
-      score: Number(parsed.score ?? fallbackByArea[area].score),
-      summary: String(parsed.summary ?? fallbackByArea[area].summary),
-      corrections: Array.isArray(parsed.corrections) ? parsed.corrections.map(String) : fallbackByArea[area].corrections,
-      reviewItems: Array.isArray(parsed.reviewItems) ? parsed.reviewItems : fallbackByArea[area].reviewItems,
-    };
-  } catch {
-    return fallbackByArea[area];
-  }
+  return fallbackByArea[area];
 }
 
-export async function requestAiReply(apiKey: string, messages: ChatMessage[], scenario: string) {
+export async function requestAiReply(messages: ChatMessage[], scenario: string) {
   try {
     const response = await fetch("/api/ai/reply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ apiKey, messages, scenario }),
+      body: JSON.stringify({ messages, scenario }),
     });
+
     if (response.ok) {
       const data = await response.json();
       return String(data.reply ?? "Please say it in a complete English sentence.");
     }
   } catch {
-    // fall through
+    // Cloud AI is optional. Local fallback keeps practice usable.
   }
 
   const userMessages = messages.filter((message) => message.role === "user");
   const lastUser = userMessages.length ? userMessages[userMessages.length - 1].text : "";
-  if (!apiKey.trim()) {
-    if (!lastUser.trim()) return "我们先从简单句开始。Please answer in one or two English sentences.";
-    return "很好，我明白你的意思。Can you add one reason? For example: because it is relaxing.";
-  }
 
-  try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4.1-mini",
-        messages: [
-          { role: "system", content: `${SYSTEM_PROMPT} 当前口语场景：${scenario}` },
-          ...messages.map((message) => ({
-            role: message.role === "agent" ? "assistant" : "user",
-            content: message.text,
-          })),
-        ],
-      }),
-    });
-    if (!response.ok) return "我先给你一个温和提示：try to answer with a full sentence.";
-    const data = await response.json();
-    return String(data.choices?.[0]?.message?.content ?? "Please say it in a complete English sentence.");
-  } catch {
-    return "网络或 API 暂时不可用。我们继续离线练习：Please answer with one complete sentence.";
-  }
+  if (!lastUser.trim()) return "我们先从简单句开始。Please answer in one or two English sentences.";
+  return "很好，我明白你的意思。Can you add one reason? For example: because it is relaxing.";
 }
 
 export async function generateDailyReport(state: AppState): Promise<Omit<DailyReport, "id">> {
@@ -177,10 +110,10 @@ export async function generateDailyReport(state: AppState): Promise<Omit<DailyRe
     date: today,
     summary: `今天你完成了词汇、口语、写作和集中复习。当前仍有 ${learningItems.length} 个内容需要继续巩固，已经掌握 ${masteredItems.length} 个复习项。`,
     strengths: masteredItems.length
-      ? masteredItems.slice(0, 3).map((item) => `你对「${item.title}」的掌握更稳定了。`)
+      ? masteredItems.slice(0, 3).map((item) => `你对“${item.title}”的掌握更稳定了。`)
       : ["你能坚持完成每日练习，这是提升英语最重要的基础。"],
     weaknesses: weakAreas.length
-      ? weakAreas.map((item) => `「${item.title}」还需要复习：${item.note}`)
+      ? weakAreas.map((item) => `“${item.title}”还需要复习：${item.note}`)
       : ["目前没有明显高频薄弱项，下一步可以增加表达自然度训练。"],
     encouragement: "今天的小步练习很有价值。Keep going, small steps make real progress.",
     nextPlan: [
@@ -194,8 +127,9 @@ export async function generateDailyReport(state: AppState): Promise<Omit<DailyRe
     const response = await fetch("/api/ai/report", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ apiKey: state.apiKey, state }),
+      body: JSON.stringify({ state }),
     });
+
     if (response.ok) {
       const data = await response.json();
       return {
@@ -208,48 +142,8 @@ export async function generateDailyReport(state: AppState): Promise<Omit<DailyRe
       };
     }
   } catch {
-    // fall through
+    // Cloud AI is optional. Local fallback keeps reports usable.
   }
 
-  if (!state.apiKey.trim()) return fallback;
-
-  try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${state.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4.1-mini",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          {
-            role: "user",
-            content:
-              "请根据用户今天的英语学习数据生成一份中文为主、英文例句为辅的学习报告，只使用中文和英语。返回 JSON：summary, strengths, weaknesses, encouragement, nextPlan。\n" +
-              JSON.stringify({
-                diagnosis: state.diagnosis,
-                reviewItems: state.reviewItems.slice(0, 20),
-                knowledge: state.knowledge.slice(0, 20),
-              }),
-          },
-        ],
-        response_format: { type: "json_object" },
-      }),
-    });
-    if (!response.ok) return fallback;
-    const data = await response.json();
-    const parsed = JSON.parse(data.choices?.[0]?.message?.content ?? "{}");
-    return {
-      date: today,
-      summary: String(parsed.summary ?? fallback.summary),
-      strengths: Array.isArray(parsed.strengths) ? parsed.strengths.map(String) : fallback.strengths,
-      weaknesses: Array.isArray(parsed.weaknesses) ? parsed.weaknesses.map(String) : fallback.weaknesses,
-      encouragement: String(parsed.encouragement ?? fallback.encouragement),
-      nextPlan: Array.isArray(parsed.nextPlan) ? parsed.nextPlan.map(String) : fallback.nextPlan,
-    };
-  } catch {
-    return fallback;
-  }
+  return fallback;
 }

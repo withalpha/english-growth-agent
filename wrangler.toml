@@ -3,4 +3,5 @@ compatibility_date = "2026-06-16"
 pages_build_output_dir = "dist"
 
 [vars]
+OPENAI_BASE_URL = "https://yunwu.ai/v1"
 OPENAI_MODEL = "gpt-4.1-mini"

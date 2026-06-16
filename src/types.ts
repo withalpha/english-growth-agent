@@ -88,7 +88,6 @@ export interface LearningProgress {
 }
 
 export interface AppState {
-  apiKey: string;
   diagnosis: DiagnosisResult;
   reviewItems: ReviewItem[];
   knowledge: KnowledgeEntry[];

@@ -22,7 +22,6 @@ const withReviewMeta = (
 });
 
 export const defaultState = (): AppState => ({
-  apiKey: "",
   diagnosis: {
     completed: false,
     vocabularyLevel: "未诊断",
@@ -76,7 +75,19 @@ export const loadState = (): AppState => {
     if (!raw) return defaultState();
     const defaults = defaultState();
     const parsed = JSON.parse(raw);
-    return { ...defaults, ...parsed, progress: { ...defaults.progress, ...parsed.progress } };
+    return {
+      ...defaults,
+      diagnosis: { ...defaults.diagnosis, ...parsed.diagnosis },
+      reviewItems: Array.isArray(parsed.reviewItems) ? parsed.reviewItems : defaults.reviewItems,
+      knowledge: Array.isArray(parsed.knowledge) ? parsed.knowledge : defaults.knowledge,
+      dailyReports: Array.isArray(parsed.dailyReports) ? parsed.dailyReports : defaults.dailyReports,
+      progress: {
+        diagnosis: { ...defaults.progress.diagnosis, ...parsed.progress?.diagnosis },
+        today: { ...defaults.progress.today, ...parsed.progress?.today },
+      },
+      streakDays: Number(parsed.streakDays ?? defaults.streakDays),
+      lastStudyDate: parsed.lastStudyDate,
+    };
   } catch {
     return defaultState();
   }

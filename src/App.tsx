@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   ClipboardCheck,
   FileText,
-  KeyRound,
   Library,
   Mic,
   RotateCcw,
@@ -17,7 +16,7 @@ import { generateDailyReport, requestAiFeedback, requestAiReply } from "./ai";
 import { getTodayKey, loadState, makeDailyReport, makeKnowledgeEntry, makeReviewItem, saveState } from "./storage";
 import type { AppState, ChatMessage, ReviewItem, SkillArea } from "./types";
 
-type Tab = "today" | "diagnosis" | "review" | "knowledge" | "reports" | "settings";
+type Tab = "today" | "diagnosis" | "review" | "knowledge" | "reports";
 type DailyTheme = (typeof dailyThemes)[number];
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -127,9 +126,6 @@ export function App() {
           <button className={activeTab === "reports" ? "active" : ""} onClick={() => setActiveTab("reports")}>
             <FileText size={18} /> 我的报告
           </button>
-          <button className={activeTab === "settings" ? "active" : ""} onClick={() => setActiveTab("settings")}>
-            <KeyRound size={18} /> 设置
-          </button>
         </nav>
         <div className="side-stat">
           <span>连续学习</span>
@@ -154,7 +150,6 @@ export function App() {
         {activeTab === "review" && <ReviewView state={state} updateState={updateState} />}
         {activeTab === "knowledge" && <KnowledgeView state={state} />}
         {activeTab === "reports" && <ReportsView state={state} />}
-        {activeTab === "settings" && <SettingsView state={state} updateState={updateState} />}
       </main>
     </div>
   );
@@ -170,8 +165,8 @@ function Header({ state }: { state: AppState }) {
       </div>
       <div className="hero-panel">
         <Sparkles size={20} />
-        <strong>{state.apiKey ? "AI 模式已开启" : "离线练习模式"}</strong>
-        <span>Agent 只使用中文和英语与你交流。</span>
+        <strong>AI 云端模式</strong>
+        <span>线上由 Cloudflare Secret 调用模型，不在浏览器保存密钥；不可用时自动离线练习。</span>
       </div>
     </header>
   );
@@ -338,7 +333,6 @@ function DiagnosisView({
     const writingLevel = "未单独检测，后续通过每日写作练习动态评估";
 
     const feedback = await requestAiFeedback(
-      state.apiKey,
       "speaking",
       `Vocabulary score: ${vocabScore}/100\nSpeaking answers:\n${diagnosisProgress.speakingAnswers.join("\n")}`,
       "首次诊断：根据20道词汇选择题和3道口语短答分析用户英语入门水平，并制定学习计划。",
@@ -537,7 +531,6 @@ function VocabularyPractice({
     const correct = option === correctAnswer;
     updateProgress({ ...progress, selected: option, answered: true });
     const result = await requestAiFeedback(
-      state.apiKey,
       "vocabulary",
       `题目：${questionType === "en-to-cn" ? card.word : card.meaning}\n用户选择：${option}\n正确答案：${correctAnswer}`,
       "词汇单选题即时反馈。",
@@ -642,7 +635,7 @@ function SpeakingPractice({
     const reply =
       turnCount >= DAILY_SPEAKING_TARGET
         ? "这个小话题先到这里。You did it. 我们现在做一个简短评价。"
-        : await requestAiReply(state.apiKey, nextMessages, `${scenario.title}。请主动引导用户，最多5句内结束本话题。`);
+        : await requestAiReply(nextMessages, `${scenario.title}。请主动引导用户，最多5句内结束本话题。`);
     updateProgress({ ...progress, messages: [...nextMessages, { role: "agent", text: reply }], input: "" });
     if (turnCount >= DAILY_SPEAKING_TARGET) {
       await finish(nextMessages);
@@ -654,7 +647,7 @@ function SpeakingPractice({
       .filter((message) => message.role === "user")
       .map((message) => message.text)
       .join("\n");
-    const result = await requestAiFeedback(state.apiKey, "speaking", userText, scenario.goal);
+    const result = await requestAiFeedback("speaking", userText, scenario.goal);
     updateProgress({ ...progress, messages: sourceMessages, input: "", feedback: `${result.score}分：${result.summary} ${result.corrections.join(" ")}` });
     addReviewItems(result.reviewItems);
     addKnowledge({
@@ -752,7 +745,7 @@ function WritingPractice({
     const expected = normalize(prompt.answer);
     const actual = normalize(progress.answer);
     const close = actual === expected || expected.split(" ").filter((word) => actual.includes(word)).length >= 4;
-    const result = await requestAiFeedback(state.apiKey, "writing", progress.answer, `正确参考：${prompt.answer}`);
+    const result = await requestAiFeedback("writing", progress.answer, `正确参考：${prompt.answer}`);
     const nextFeedback = close
       ? `写得不错。${result.summary} 参考表达：${prompt.answer}`
       : `别着急，这里我们慢慢修。参考写法是：${prompt.answer}。你可以重点检查动词结构、语序和介词。${result.corrections.join(" ")}`;
@@ -964,38 +957,6 @@ function ReportsView({ state }: { state: AppState }) {
             <p className="feedback">{report.encouragement}</p>
           </article>
         ))}
-      </div>
-    </section>
-  );
-}
-
-function SettingsView({
-  state,
-  updateState,
-}: {
-  state: AppState;
-  updateState: (next: AppState | ((current: AppState) => AppState)) => void;
-}) {
-  return (
-    <section className="panel narrow">
-      <div className="section-title">
-        <h2>AI 设置</h2>
-        <span>{state.apiKey ? "已配置" : "可选"}</span>
-      </div>
-      <p className="muted">API Key 只保存在你的浏览器本地。没有 Key 时，App 会使用离线题库和规则反馈。</p>
-      <label className="field">
-        <span>OpenAI API Key</span>
-        <input
-          type="password"
-          value={state.apiKey}
-          onChange={(event) => updateState((current) => ({ ...current, apiKey: event.target.value }))}
-          placeholder="sk-..."
-        />
-      </label>
-      <div className="result-box">
-        <strong>语言规则</strong>
-        <p>Agent 默认用中文解释，用英语练习、举例和对话。</p>
-        <p>如果输入其他语言，Agent 会提示你改用中文或英语。</p>
       </div>
     </section>
   );
