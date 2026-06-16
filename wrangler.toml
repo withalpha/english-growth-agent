@@ -4,4 +4,4 @@ pages_build_output_dir = "dist"
 
 [vars]
 OPENAI_BASE_URL = "https://yunwu.ai/v1"
-OPENAI_MODEL = "gpt-4.1-mini"
+OPENAI_MODEL = "gpt-5.4-mini"
