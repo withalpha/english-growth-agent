@@ -93,6 +93,7 @@ export const defaultState = (): AppState => ({
   streakDays: 0,
   nextThemeId: undefined,
   completedThemeIds: [],
+  generatedThemes: [],
 });
 
 /**
@@ -108,8 +109,9 @@ const applyDayResetIfNeeded = (state: AppState): AppState => {
 
   if (progressDate !== today && vocCompleted && speakCompleted && writeCompleted) {
     // 新的一天且昨天已完成 → 重置今日进度，优先使用预选的下一主题
-    const nextThemeId = (state as AppState & { nextThemeId?: string }).nextThemeId;
-    const theme = (nextThemeId ? dailyThemes.find((t) => t.id === nextThemeId) : null) ?? getDefaultTheme();
+    const nextThemeId = state.nextThemeId;
+    const allAvailable = [...dailyThemes, ...(state.generatedThemes ?? [])];
+    const theme = (nextThemeId ? allAvailable.find((t) => t.id === nextThemeId) : null) ?? getDefaultTheme();
     return {
       ...state,
       nextThemeId: undefined, // 清除已使用的预选主题
@@ -176,6 +178,7 @@ export const loadState = (): AppState => {
       lastStudyDate: parsed.lastStudyDate,
       nextThemeId: typeof parsed.nextThemeId === "string" ? parsed.nextThemeId : undefined,
       completedThemeIds: Array.isArray(parsed.completedThemeIds) ? parsed.completedThemeIds as string[] : [],
+      generatedThemes: Array.isArray(parsed.generatedThemes) ? parsed.generatedThemes as import("./types").DailyTheme[] : [],
     };
     // 在读取时就应用新的一天重置，避免 React 层面的竞态条件
     return applyDayResetIfNeeded(loaded);
@@ -289,6 +292,7 @@ export const loadStateFromCloud = async (): Promise<AppState | null> => {
       lastStudyDate: raw.lastStudyDate as string | undefined,
       nextThemeId: typeof raw.nextThemeId === "string" ? raw.nextThemeId : undefined,
       completedThemeIds: Array.isArray(raw.completedThemeIds) ? raw.completedThemeIds as string[] : [],
+      generatedThemes: Array.isArray(raw.generatedThemes) ? raw.generatedThemes as import("./types").DailyTheme[] : [],
     } as AppState;
     return applyDayResetIfNeeded(cloudLoaded);
   } catch {

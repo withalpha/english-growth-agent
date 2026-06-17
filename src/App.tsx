@@ -13,12 +13,12 @@ import {
   Volume2,
 } from "lucide-react";
 import { areaLabels, dailyThemes, vocabularyCards } from "./data";
-import { generateDailyReport, requestAiFeedback, requestAiReply, requestTts } from "./ai";
+import { generateDailyReport, requestAiFeedback, requestAiReply, requestGenerateTheme, requestTts } from "./ai";
 import { getCurrentUser, getTodayKey, loadState, loadStateFromCloud, makeDailyReport, makeKnowledgeEntry, makeReviewItem, saveState, saveStateToCloud } from "./storage";
-import type { AppState, ChatMessage, ReviewItem, SkillArea } from "./types";
+import type { AppState, ChatMessage, DailyTheme, ReviewItem, SkillArea } from "./types";
 
 type Tab = "today" | "diagnosis" | "review" | "knowledge" | "reports";
-type DailyTheme = (typeof dailyThemes)[number];
+// DailyTheme 接口已从 types.ts 导入
 type PathStatus = "completed" | "current" | "locked";
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -77,33 +77,37 @@ const getTodayTheme = () => dailyThemes[getDayIndex() % dailyThemes.length];
 /**
  * 根据用户已完成的主题历史，选择今日主题。
  * 优先使用 nextThemeId（完成前一天时预选的），
- * 否则选一个用户还没完成过的主题，
- * 如果全部完成过则重新开始轮换。
+ * 否则选一个用户还没完成过的主题（预定义 + AI 生成），
+ * 如果全部完成过则触发 AI 生成新主题（由 completeStudy 处理）。
  */
-const getThemeForToday = (state: AppState): (typeof dailyThemes)[0] => {
-  // 如果有预选的下一主题，直接使用
+const getThemeForToday = (state: AppState): DailyTheme => {
+  const allThemes: DailyTheme[] = [...dailyThemes, ...(state.generatedThemes ?? [])];
+  // 优先使用预选的下一主题
   if (state.nextThemeId) {
-    const preset = dailyThemes.find((t) => t.id === state.nextThemeId);
+    const preset = allThemes.find((t) => t.id === state.nextThemeId);
     if (preset) return preset;
   }
   // 找一个还没做过的主题
   const done = new Set(state.completedThemeIds ?? []);
-  const fresh = dailyThemes.find((t) => !done.has(t.id));
+  const fresh = allThemes.find((t) => !done.has(t.id));
   if (fresh) return fresh;
-  // 全部完成过了 → 从头轮换（按天索引），给用户重新复习机会
-  return getTodayTheme();
+  // 全部完成过了 → 先用第一个预定义主题兜底（completeStudy 会异步生成新主题）
+  return dailyThemes[0];
 };
 
 /**
- * 在已完成主题列表中选出下一个未完成的主题 ID。
- * 用于完成今日学习后预选明天的主题。
+ * 从所有可用主题（预定义 + AI 生成）中选出下一个未完成的主题 ID。
+ * 若全部用完则返回 null（表示需要 AI 生成新主题）。
  */
-const pickNextThemeId = (currentThemeId: string, completedThemeIds: string[]): string => {
-  const updated = [...completedThemeIds, currentThemeId];
-  const doneSet = new Set(updated);
-  const next = dailyThemes.find((t) => !doneSet.has(t.id));
-  // 如果全部做完了，从头选（排除当前主题）
-  return (next ?? dailyThemes.find((t) => t.id !== currentThemeId) ?? dailyThemes[0]).id;
+const pickNextThemeId = (
+  currentThemeId: string,
+  completedThemeIds: string[],
+  generatedThemes: DailyTheme[],
+): string | null => {
+  const allThemes: DailyTheme[] = [...dailyThemes, ...generatedThemes];
+  const done = new Set([...completedThemeIds, currentThemeId]);
+  const next = allThemes.find((t) => !done.has(t.id));
+  return next?.id ?? null; // null 表示需要 AI 生成新主题
 };
 
 const resetTodayProgressForTheme = (theme: DailyTheme) => ({
@@ -179,23 +183,51 @@ export function App() {
 
   const completeStudy = async () => {
     const report = await generateDailyReport(state);
-    updateState((current) => {
-      const today = getTodayKey();
-      const streakDays = current.lastStudyDate === today ? current.streakDays : current.streakDays + 1;
-      const otherReports = current.dailyReports.filter((item) => item.date !== today);
-      // 记录本次主题，并预选明天的主题（避免重复）
-      const currentThemeId = current.progress.today.themeId;
-      const updatedCompleted = [...(current.completedThemeIds ?? []), currentThemeId].slice(-dailyThemes.length);
-      const nextThemeId = pickNextThemeId(currentThemeId, current.completedThemeIds ?? []);
-      return {
-        ...current,
-        lastStudyDate: today,
-        streakDays,
-        dailyReports: [makeDailyReport(report), ...otherReports],
-        completedThemeIds: updatedCompleted,
-        nextThemeId,
-      };
-    });
+    const currentThemeId = state.progress.today.themeId;
+    const updatedCompleted = [...(state.completedThemeIds ?? []), currentThemeId];
+    const nextId = pickNextThemeId(currentThemeId, state.completedThemeIds ?? [], state.generatedThemes ?? []);
+
+    if (nextId !== null) {
+      // 还有未使用的主题，直接预选
+      updateState((current) => {
+        const today = getTodayKey();
+        const streakDays = current.lastStudyDate === today ? current.streakDays : current.streakDays + 1;
+        const otherReports = current.dailyReports.filter((item) => item.date !== today);
+        return {
+          ...current,
+          lastStudyDate: today,
+          streakDays,
+          dailyReports: [makeDailyReport(report), ...otherReports],
+          completedThemeIds: updatedCompleted.slice(-50),
+          nextThemeId: nextId,
+        };
+      });
+    } else {
+      // 所有主题已用完 → 调用 AI 生成全新主题
+      const allThemes: DailyTheme[] = [...dailyThemes, ...(state.generatedThemes ?? [])];
+      const completedTitles = allThemes.map((t) => t.title);
+      const usedWords = allThemes.flatMap((t) => t.vocabulary.map((v) => v.word));
+      const newTheme = await requestGenerateTheme(completedTitles, usedWords);
+
+      updateState((current) => {
+        const today = getTodayKey();
+        const streakDays = current.lastStudyDate === today ? current.streakDays : current.streakDays + 1;
+        const otherReports = current.dailyReports.filter((item) => item.date !== today);
+        const newGeneratedThemes = newTheme
+          ? [...(current.generatedThemes ?? []), newTheme]
+          : (current.generatedThemes ?? []);
+        return {
+          ...current,
+          lastStudyDate: today,
+          streakDays,
+          dailyReports: [makeDailyReport(report), ...otherReports],
+          completedThemeIds: updatedCompleted.slice(-50),
+          // 使用新生成的主题，若生成失败则从第一个主题重新开始
+          nextThemeId: newTheme?.id ?? dailyThemes[0].id,
+          generatedThemes: newGeneratedThemes,
+        };
+      });
+    }
   };
 
   return (
@@ -363,8 +395,9 @@ function TodayView({
   // 强制重置今日进度，切换到下一个未完成的主题（用于状态不一致时的紧急逃生）
   const forceNewDay = () => {
     const currentThemeId = state.progress.today.themeId;
-    const nextId = pickNextThemeId(currentThemeId, state.completedThemeIds ?? []);
-    const nextTheme = dailyThemes.find((t) => t.id === nextId) ?? getTodayTheme();
+    const allThemes: DailyTheme[] = [...dailyThemes, ...(state.generatedThemes ?? [])];
+    const nextId = pickNextThemeId(currentThemeId, state.completedThemeIds ?? [], state.generatedThemes ?? []);
+    const nextTheme = (nextId ? allThemes.find((t) => t.id === nextId) : null) ?? dailyThemes[0];
     updateState((current) => ({
       ...current,
       lastStudyDate: undefined,

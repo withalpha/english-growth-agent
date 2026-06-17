@@ -163,3 +163,28 @@ export async function requestTts(word: string): Promise<HTMLAudioElement | null>
     return null;
   }
 }
+
+/**
+ * 调用 AI 生成一个全新的每日学习主题。
+ * 在所有预定义主题都使用过后调用，确保内容不重复。
+ */
+export async function requestGenerateTheme(
+  completedTitles: string[],
+  usedWords: string[],
+): Promise<import("./types").DailyTheme | null> {
+  try {
+    const response = await fetch("/api/ai/generate-theme", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ completedTitles, usedWords }),
+    });
+    if (!response.ok) return null;
+    const theme = await response.json() as import("./types").DailyTheme;
+    if (!theme || !theme.id || !theme.vocabulary || !theme.speaking || !theme.writingLesson) {
+      return null;
+    }
+    return theme;
+  } catch {
+    return null;
+  }
+}

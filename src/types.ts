@@ -102,11 +102,41 @@ export interface AppState {
   nextThemeId?: string;
   /** 已完成的主题 ID 列表（用于避免重复）*/
   completedThemeIds?: string[];
+  /** AI 生成的额外主题（7个预定义主题用完后使用）*/
+  generatedThemes?: DailyTheme[];
 }
 
 export interface ChatMessage {
   role: "agent" | "user";
   text: string;
+}
+
+/** 每日学习主题的完整结构（预定义或 AI 生成均使用此结构）*/
+export interface DailyTheme {
+  id: string;
+  title: string;
+  domain: string;
+  description: string;
+  vocabulary: Array<{
+    word: string;
+    meaning: string;
+    example: string;
+    prompt: string;
+  }>;
+  speaking: {
+    title: string;
+    opener: string;
+    goal: string;
+  };
+  writingLesson: {
+    grammar: string;
+    tip: string;
+    examples: string[];
+    prompts: Array<{
+      zh: string;
+      answer: string;
+    }>;
+  };
 }
 
 export interface AiFeedback {
