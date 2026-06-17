@@ -170,6 +170,11 @@ export function App() {
           </button>
           <button className={activeTab === "diagnosis" ? "active" : ""} onClick={() => setActiveTab("diagnosis")}>
             <ClipboardCheck size={18} /> 首次诊断
+            {state.diagnosis.completed && (
+              <span style={{ marginLeft: "auto", fontSize: 10, background: "#67c85d", color: "#102413", borderRadius: 999, padding: "2px 7px", fontWeight: 700, flexShrink: 0 }}>
+                ✓ 已完成
+              </span>
+            )}
           </button>
           <button className={activeTab === "review" ? "active" : ""} onClick={() => setActiveTab("review")}>
             <RotateCcw size={18} /> 集中复习
@@ -1484,13 +1489,7 @@ function ReviewView({
   state: AppState;
   updateState: (next: AppState | ((current: AppState) => AppState)) => void;
 }) {
-  const dueItems = useMemo(
-    () =>
-      [...state.reviewItems]
-        .filter((item) => item.status !== "mastered")
-        .sort((a, b) => b.errorCount + (5 - b.confidence) - (a.errorCount + (5 - a.confidence))),
-    [state.reviewItems],
-  );
+  const [activeArea, setActiveArea] = useState<SkillArea>("vocabulary");
 
   const mark = (id: string, mastered: boolean) => {
     updateState((current) => ({
@@ -1511,45 +1510,295 @@ function ReviewView({
     }));
   };
 
+  const dueItems = useMemo(
+    () => [...state.reviewItems].filter((item) => item.status !== "mastered"),
+    [state.reviewItems],
+  );
+
+  const areaItems: Record<SkillArea, ReviewItem[]> = {
+    vocabulary: dueItems.filter((item) => item.area === "vocabulary"),
+    speaking: dueItems.filter((item) => item.area === "speaking"),
+    writing: dueItems.filter((item) => item.area === "writing"),
+  };
+
+  const currentItems = areaItems[activeArea];
+
   return (
     <section className="panel">
       <div className="section-title">
-        <h2>集中复习总结</h2>
+        <h2>集中复习</h2>
         <span>{dueItems.length} 个待巩固项</span>
       </div>
-      <p className="muted">如果你仍然不熟悉，点“仍需巩固”，它会继续出现在下次集中复习里，直到你连续掌握。</p>
-      <div className="review-list">
-        {dueItems.map((item) => (
-          <ReviewCard item={item} key={item.id} mark={mark} />
+      <p className="muted">
+        按科目分类复习薄弱项。词汇和写作支持“开始练习”模式，口语可朗读参考答案。连续掌握 3 次自动归档。
+      </p>
+
+      {/* 科目分类标签 */}
+      <div className="segmented">
+        {(["vocabulary", "speaking", "writing"] as SkillArea[]).map((area) => (
+          <button key={area} className={activeArea === area ? "active" : ""} onClick={() => setActiveArea(area)}>
+            {areaLabels[area]}
+            {areaItems[area].length > 0 && (
+              <span
+                style={{
+                  marginLeft: 6,
+                  fontSize: 11,
+                  background: "#2f8a43",
+                  color: "#fff",
+                  borderRadius: 999,
+                  padding: "1px 6px",
+                  fontWeight: 700,
+                }}
+              >
+                {areaItems[area].length}
+              </span>
+            )}
+          </button>
         ))}
-        {dueItems.length === 0 && <div className="empty">今天没有高优先级复习项。Great work!</div>}
+      </div>
+
+      {/* 当前科目的复习列表 */}
+      <div className="review-list">
+        {currentItems.map((item) => (
+          <ReviewCard key={item.id} item={item} mark={mark} />
+        ))}
+        {currentItems.length === 0 && (
+          <div className="empty">{areaLabels[activeArea]}暂无待巩固项，继续加油！Great work!</div>
+        )}
       </div>
     </section>
   );
 }
 
+// ─── 词汇复习练习（MCQ 选择题，与今日词汇互动同款）───
+function VocabReviewPractice({
+  item,
+  mark,
+  onClose,
+}: {
+  item: ReviewItem;
+  mark: (id: string, mastered: boolean) => void;
+  onClose: () => void;
+}) {
+  const parseNote = (note: string): { word: string; meaning: string } => {
+    const eqIdx = note.indexOf(" = ");
+    if (eqIdx === -1) return { word: item.title, meaning: note };
+    return { word: note.slice(0, eqIdx).trim(), meaning: note.slice(eqIdx + 3).trim() };
+  };
+  const { word, meaning } = parseNote(item.note);
+  const questionType: "en-to-cn" | "cn-to-en" = item.prompt.includes("中文意思") ? "en-to-cn" : "cn-to-en";
+  const correctAnswer = questionType === "en-to-cn" ? meaning : word;
+
+  const options = useMemo(() => {
+    const pool = vocabularyCards.filter((c) => c.word !== word);
+    const distractors = shuffleArray([...pool])
+      .slice(0, 3)
+      .map((c) => (questionType === "en-to-cn" ? c.meaning : c.word));
+    return shuffleArray([correctAnswer, ...distractors]);
+  }, [correctAnswer, questionType, word]);
+
+  const [selected, setSelected] = useState("");
+  const [answered, setAnswered] = useState(false);
+  const isCorrect = answered && selected === correctAnswer;
+
+  const speakWord = () => {
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      const utt = new SpeechSynthesisUtterance(word);
+      utt.lang = "en-US";
+      utt.rate = 0.9;
+      window.speechSynthesis.speak(utt);
+    }
+  };
+
+  const choose = (option: string) => {
+    if (answered) return;
+    setSelected(option);
+    setAnswered(true);
+    mark(item.id, option === correctAnswer);
+  };
+
+  return (
+    <article className="review-card" style={{ border: "2px solid #73a66f", background: "#f8faf6", overflow: "hidden" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <span className="tag">{areaLabels[item.area]}</span>
+        <button style={{ minHeight: "unset", padding: "4px 10px", fontSize: 12 }} onClick={onClose}>
+          ✕ 关闭
+        </button>
+      </div>
+      <p className="muted" style={{ marginBottom: 8 }}>
+        {questionType === "en-to-cn" ? "这个英文单词是什么意思？" : "哪个英文单词对应这个中文？"}
+      </p>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+        <h3 style={{ fontSize: 26, margin: 0, fontWeight: 800 }}>
+          {questionType === "en-to-cn" ? word : meaning}
+        </h3>
+        {questionType === "en-to-cn" && (
+          <button className="vocab-speaker-btn" onClick={speakWord} title="朗读" style={{ flexShrink: 0 }}>
+            <Volume2 size={16} />
+          </button>
+        )}
+      </div>
+      <div className="vocab-options">
+        {options.map((option, idx) => {
+          let cls = "vocab-option";
+          if (answered) {
+            if (option === correctAnswer) cls += " show-correct";
+            else if (option === selected) cls += " wrong";
+          }
+          return (
+            <button
+              key={option}
+              className={cls}
+              style={{ animationDelay: `${idx * 60}ms` }}
+              onClick={() => choose(option)}
+              disabled={answered}
+            >
+              {option}
+            </button>
+          );
+        })}
+      </div>
+      {answered && (
+        <div className={`vocab-result-bar ${isCorrect ? "correct-bar" : "wrong-bar"}`}>
+          <div className="vocab-result-content">
+            <span className="vocab-result-icon">{isCorrect ? "✅" : "❌"}</span>
+            <div>
+              <strong>{isCorrect ? "太棒了！" : "继续加油！"}</strong>
+              <p className="vocab-result-detail">{item.note}</p>
+            </div>
+          </div>
+          <div className="vocab-result-actions">
+            <button className="primary vocab-continue-btn" onClick={onClose}>继续</button>
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+
+// ─── 写作复习练习（自由书写 + AI 检查，与今日写作练习同款）───
+function WritingReviewPractice({
+  item,
+  mark,
+  onClose,
+}: {
+  item: ReviewItem;
+  mark: (id: string, mastered: boolean) => void;
+  onClose: () => void;
+}) {
+  const [answer, setAnswer] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [checked, setChecked] = useState(false);
+
+  const checkAnswer = async () => {
+    if (!answer.trim()) return;
+    setFeedback("AI 正在检查...");
+    const result = await requestAiFeedback(
+      "writing",
+      answer,
+      `中文参考：${item.prompt}\n正确参考答案：${item.answer}\n语法要点：${item.note}`,
+    );
+    const correct = result.score >= 70;
+    setFeedback(
+      correct
+        ? `✅ 很好！${result.summary}${result.corrections.length ? " " + result.corrections.join(" ") : ""}`
+        : `❌ 需要调整。${result.summary} ${result.corrections.join(" ")}`,
+    );
+    setChecked(true);
+    mark(item.id, correct);
+  };
+
+  return (
+    <article className="review-card" style={{ border: "2px solid #73a66f", background: "#f8faf6" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <span className="tag">{areaLabels[item.area]}</span>
+        <button style={{ minHeight: "unset", padding: "4px 10px", fontSize: 12 }} onClick={onClose}>
+          ✕ 关闭
+        </button>
+      </div>
+      <div className="writing-zh-card">
+        <span className="writing-zh-label">翻译成英文</span>
+        <p className="writing-zh-text">{item.prompt}</p>
+      </div>
+      <textarea
+        value={answer}
+        onChange={(e) => setAnswer(e.target.value)}
+        placeholder="Write your English sentence here..."
+        style={{ fontSize: 16, marginTop: 12 }}
+        disabled={checked}
+      />
+      {feedback && (
+        <p
+          className="feedback"
+          style={checked && feedback.startsWith("✅") ? {} : { borderLeftColor: "#cf5d3b", background: "#fff2ec" }}
+        >
+          {feedback}
+        </p>
+      )}
+      {!checked && (
+        <details style={{ marginTop: 10 }}>
+          <summary style={{ cursor: "pointer", color: "#667461", fontSize: 13 }}>查看参考答案</summary>
+          <p className="example" style={{ marginTop: 6 }}>{item.answer}</p>
+        </details>
+      )}
+      <div className="actions">
+        <button onClick={onClose} disabled={!checked}>完成</button>
+        <button className="primary" onClick={checkAnswer} disabled={!answer.trim() || checked}>
+          <BookOpen size={18} /> AI 检查
+        </button>
+      </div>
+    </article>
+  );
+}
+
 function ReviewCard({ item, mark }: { item: ReviewItem; mark: (id: string, mastered: boolean) => void }) {
-  const [showAnswer, setShowAnswer] = useState(false);
+  const [practiceMode, setPracticeMode] = useState(false);
+
+  if (practiceMode && item.area === "vocabulary") {
+    return <VocabReviewPractice item={item} mark={mark} onClose={() => setPracticeMode(false)} />;
+  }
+  if (practiceMode && item.area === "writing") {
+    return <WritingReviewPractice item={item} mark={mark} onClose={() => setPracticeMode(false)} />;
+  }
+
+  const speakAnswer = () => {
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      const utt = new SpeechSynthesisUtterance(item.answer);
+      utt.lang = "en-US";
+      utt.rate = 0.9;
+      window.speechSynthesis.speak(utt);
+    }
+  };
+
   return (
     <article className="review-card">
       <span className="tag">{areaLabels[item.area]}</span>
       <h3>{item.title}</h3>
       <p>{item.prompt}</p>
-      {showAnswer && (
-        <div className="answer">
-          <strong>{item.answer}</strong>
-          <span>{item.note}</span>
+      <div className="answer">
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+          <strong style={{ flex: 1 }}>{item.answer}</strong>
+          <button className="bubble-speaker-btn" onClick={speakAnswer} title="朗读参考答案" style={{ flexShrink: 0, marginTop: 2 }}>
+            <Volume2 size={14} />
+          </button>
         </div>
-      )}
+        <span>{item.note}</span>
+      </div>
       <div className="meta-row">
         <span>错误 {item.errorCount} 次</span>
         <span>掌握度 {item.confidence}/5</span>
         <span>连续掌握 {item.streak}/3</span>
       </div>
       <div className="actions">
-        <button onClick={() => setShowAnswer(!showAnswer)}>{showAnswer ? "隐藏答案" : "查看答案"}</button>
+        {(item.area === "vocabulary" || item.area === "writing") && (
+          <button className="primary" onClick={() => setPracticeMode(true)}>
+            🎯 开始练习
+          </button>
+        )}
         <button onClick={() => mark(item.id, false)}>仍需巩固</button>
-        <button className="primary" onClick={() => mark(item.id, true)}>
+        <button className={item.area === "speaking" ? "primary" : ""} onClick={() => mark(item.id, true)}>
           已掌握
         </button>
       </div>
