@@ -1839,50 +1839,129 @@ function KnowledgeView({ state }: { state: AppState }) {
 }
 
 function ReportsView({ state }: { state: AppState }) {
-  const latestReport = state.dailyReports[0];
-  return (
-    <section className="panel">
-      <div className="section-title">
-        <h2>我的学习报告</h2>
-        <span>{state.dailyReports.length} 份报告</span>
-      </div>
-      {!latestReport && <div className="empty">完成今日学习后，Agent 会在这里生成你的专属学习报告。</div>}
-      {latestReport && (
-        <div className="result-box">
-          <strong>当前学习状态</strong>
-          <p>{latestReport.summary}</p>
-          <p>{latestReport.encouragement}</p>
+  const [selectedId, setSelectedId] = useState<string | null>(
+    state.dailyReports[0]?.id ?? null,
+  );
+
+  const selected = state.dailyReports.find((r) => r.id === selectedId) ?? null;
+
+  const formatDate = (dateStr: string): string => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const yesterdayStr = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    if (dateStr === todayStr) return "今天";
+    if (dateStr === yesterdayStr) return "昨天";
+    const d = new Date(dateStr + "T00:00:00");
+    return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+  };
+
+  if (state.dailyReports.length === 0) {
+    return (
+      <section className="panel">
+        <div className="section-title">
+          <h2>我的学习报告</h2>
+          <span>0 份</span>
         </div>
+        <div className="empty">完成今日学习后，Agent 会在这里生成你的专属学习报告。</div>
+      </section>
+    );
+  }
+
+  return (
+    <div className="grid two" style={{ alignItems: "start" }}>
+      {/* 左侧：日期列表 */}
+      <section className="panel">
+        <div className="section-title">
+          <h2>我的学习报告</h2>
+          <span>{state.dailyReports.length} 份</span>
+        </div>
+        <div style={{ display: "grid", gap: 8 }}>
+          {state.dailyReports.map((report) => {
+            const isSelected = selectedId === report.id;
+            return (
+              <button
+                key={report.id}
+                onClick={() => setSelectedId(report.id)}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  justifyContent: "flex-start",
+                  flexDirection: "column",
+                  alignItems: "flex-start",
+                  padding: "12px 16px",
+                  borderRadius: 10,
+                  minHeight: "unset",
+                  gap: 4,
+                  background: isSelected ? "#eef8ec" : "#f8faf6",
+                  borderColor: isSelected ? "#2f8a43" : "#dfe7dc",
+                  borderWidth: isSelected ? 2 : 1,
+                }}
+              >
+                <span style={{ fontWeight: 700, fontSize: 15, color: "#172018" }}>
+                  📅 {formatDate(report.date)}
+                </span>
+                <span style={{ fontSize: 12, color: "#667461", lineHeight: 1.5, fontWeight: "normal", display: "block" }}>
+                  {report.summary.length > 45 ? report.summary.slice(0, 45) + "…" : report.summary}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* 右侧：报告详情 */}
+      {selected ? (
+        <section className="panel">
+          <div className="section-title">
+            <h2>📅 {formatDate(selected.date)}</h2>
+            <span>{selected.date}</span>
+          </div>
+
+          {/* 总结 + 鼓励 */}
+          <div className="result-box" style={{ marginBottom: 20 }}>
+            <p style={{ lineHeight: 1.7 }}>{selected.summary}</p>
+            <p style={{ marginTop: 10, color: "#2f8a43", fontWeight: 600 }}>{selected.encouragement}</p>
+          </div>
+
+          {/* 掌握较好 */}
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: "#255f32", margin: "0 0 10px", display: "flex", alignItems: "center", gap: 6 }}>
+            ✅ 掌握较好
+          </h3>
+          <div style={{ display: "grid", gap: 6, marginBottom: 18 }}>
+            {selected.strengths.map((item) => (
+              <p key={item} className="example" style={{ margin: 0, padding: "8px 12px", background: "#eef8ec", borderRadius: 8 }}>
+                {item}
+              </p>
+            ))}
+          </div>
+
+          {/* 仍需提升 */}
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: "#9a3e24", margin: "0 0 10px", display: "flex", alignItems: "center", gap: 6 }}>
+            📌 仍需提升
+          </h3>
+          <div style={{ display: "grid", gap: 6, marginBottom: 18 }}>
+            {selected.weaknesses.map((item) => (
+              <p key={item} className="correction" style={{ margin: 0, padding: "8px 12px", background: "#fff2ec", borderRadius: 8 }}>
+                {item}
+              </p>
+            ))}
+          </div>
+
+          {/* 下一步计划 */}
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: "#172018", margin: "0 0 10px" }}>
+            🗓 下一步计划
+          </h3>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {selected.nextPlan.map((item) => (
+              <span className="pill" key={item}>{item}</span>
+            ))}
+          </div>
+        </section>
+      ) : (
+        <section className="panel" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 200 }}>
+          <p className="muted">← 点击左侧日期查看对应报告</p>
+        </section>
       )}
-      <div className="knowledge-list">
-        {state.dailyReports.map((report) => (
-          <article className="knowledge-entry" key={report.id}>
-            <span className="tag">{report.date}</span>
-            <h3>今日学习总结</h3>
-            <p>{report.summary}</p>
-            <h3>掌握较好</h3>
-            {report.strengths.map((item) => (
-              <p className="example" key={item}>
-                {item}
-              </p>
-            ))}
-            <h3>仍需提升</h3>
-            {report.weaknesses.map((item) => (
-              <p className="correction" key={item}>
-                {item}
-              </p>
-            ))}
-            <h3>之后计划</h3>
-            {report.nextPlan.map((item) => (
-              <span className="pill" key={item}>
-                {item}
-              </span>
-            ))}
-            <p className="feedback">{report.encouragement}</p>
-          </article>
-        ))}
-      </div>
-    </section>
+    </div>
   );
 }
 
