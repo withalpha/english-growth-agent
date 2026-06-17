@@ -1839,126 +1839,193 @@ function KnowledgeView({ state }: { state: AppState }) {
 }
 
 function ReportsView({ state }: { state: AppState }) {
-  const [selectedId, setSelectedId] = useState<string | null>(
-    state.dailyReports[0]?.id ?? null,
+  const today = new Date();
+  const [viewYear, setViewYear] = useState(today.getFullYear());
+  const [viewMonth, setViewMonth] = useState(today.getMonth()); // 0-indexed
+  const [selectedDate, setSelectedDate] = useState<string | null>(
+    state.dailyReports[0]?.date ?? null,
   );
 
-  const selected = state.dailyReports.find((r) => r.id === selectedId) ?? null;
+  // date → report 的快速查找
+  const reportDateMap = useMemo(() => {
+    const map = new Map<string, (typeof state.dailyReports)[0]>();
+    for (const report of state.dailyReports) {
+      map.set(report.date, report);
+    }
+    return map;
+  }, [state.dailyReports]);
+
+  const selectedReport = selectedDate ? (reportDateMap.get(selectedDate) ?? null) : null;
+
+  // 当月日历格子（null = 空白占位）
+  const calendarDays = useMemo(() => {
+    const firstDay = new Date(viewYear, viewMonth, 1);
+    const lastDay = new Date(viewYear, viewMonth + 1, 0);
+    const startDow = firstDay.getDay(); // 0=周日
+    const days: (number | null)[] = [];
+    for (let i = 0; i < startDow; i++) days.push(null);
+    for (let d = 1; d <= lastDay.getDate(); d++) days.push(d);
+    while (days.length % 7 !== 0) days.push(null);
+    return days;
+  }, [viewYear, viewMonth]);
+
+  const todayStr = today.toISOString().slice(0, 10);
+  const monthNames = ["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"];
+  const weekDays = ["日","一","二","三","四","五","六"];
+
+  const prevMonth = () => {
+    if (viewMonth === 0) { setViewYear((y) => y - 1); setViewMonth(11); }
+    else setViewMonth((m) => m - 1);
+  };
+  const nextMonth = () => {
+    if (viewMonth === 11) { setViewYear((y) => y + 1); setViewMonth(0); }
+    else setViewMonth((m) => m + 1);
+  };
+  const isCurrentMonth = viewYear === today.getFullYear() && viewMonth === today.getMonth();
 
   const formatDate = (dateStr: string): string => {
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const yesterdayStr = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
     if (dateStr === todayStr) return "今天";
-    if (dateStr === yesterdayStr) return "昨天";
+    const yest = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    if (dateStr === yest) return "昨天";
     const d = new Date(dateStr + "T00:00:00");
     return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
   };
 
-  if (state.dailyReports.length === 0) {
-    return (
-      <section className="panel">
-        <div className="section-title">
-          <h2>我的学习报告</h2>
-          <span>0 份</span>
-        </div>
-        <div className="empty">完成今日学习后，Agent 会在这里生成你的专属学习报告。</div>
-      </section>
-    );
-  }
-
   return (
-    <div className="grid two" style={{ alignItems: "start" }}>
-      {/* 左侧：日期列表 */}
+    <div style={{ display: "grid", gap: 18 }}>
+      {/* 日历面板 */}
       <section className="panel">
         <div className="section-title">
           <h2>我的学习报告</h2>
           <span>{state.dailyReports.length} 份</span>
         </div>
-        <div style={{ display: "grid", gap: 8 }}>
-          {state.dailyReports.map((report) => {
-            const isSelected = selectedId === report.id;
+
+        {/* 月份导航 */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+          <button onClick={prevMonth} style={{ minHeight: "unset", padding: "6px 16px", fontSize: 15 }}>‹</button>
+          <strong style={{ fontSize: 17, color: "#172018" }}>
+            {viewYear}年 {monthNames[viewMonth]}
+          </strong>
+          <button onClick={nextMonth} style={{ minHeight: "unset", padding: "6px 16px", fontSize: 15 }} disabled={isCurrentMonth}>›</button>
+        </div>
+
+        {/* 周标题 */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 6 }}>
+          {weekDays.map((d) => (
+            <div key={d} style={{ textAlign: "center", fontSize: 12, color: "#667461", fontWeight: 700, padding: "2px 0" }}>
+              {d}
+            </div>
+          ))}
+        </div>
+
+        {/* 日期格子 */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+          {calendarDays.map((day, idx) => {
+            if (day === null) return <div key={`gap-${idx}`} style={{ aspectRatio: "1" }} />;
+            const dateStr = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+            const hasReport = reportDateMap.has(dateStr);
+            const isToday = dateStr === todayStr;
+            const isSelected = dateStr === selectedDate && hasReport;
+            const isFuture = dateStr > todayStr;
             return (
               <button
-                key={report.id}
-                onClick={() => setSelectedId(report.id)}
+                key={dateStr}
+                onClick={() => hasReport && setSelectedDate(dateStr)}
+                disabled={!hasReport || isFuture}
                 style={{
-                  width: "100%",
-                  textAlign: "left",
-                  justifyContent: "flex-start",
+                  position: "relative",
+                  display: "flex",
                   flexDirection: "column",
-                  alignItems: "flex-start",
-                  padding: "12px 16px",
-                  borderRadius: 10,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: "8px 2px",
                   minHeight: "unset",
-                  gap: 4,
-                  background: isSelected ? "#eef8ec" : "#f8faf6",
-                  borderColor: isSelected ? "#2f8a43" : "#dfe7dc",
-                  borderWidth: isSelected ? 2 : 1,
+                  aspectRatio: "1",
+                  borderRadius: 10,
+                  fontSize: 14,
+                  fontWeight: isToday || isSelected ? 700 : 400,
+                  background: isSelected
+                    ? "#2f8a43"
+                    : isToday
+                      ? "#eef8ec"
+                      : hasReport
+                        ? "#f3fbf2"
+                        : "transparent",
+                  color: isSelected ? "#fff" : isFuture ? "#ccc" : "#172018",
+                  borderColor: isSelected ? "#2f8a43" : isToday ? "#b8dcb7" : hasReport ? "#c8e6c5" : "transparent",
+                  cursor: hasReport ? "pointer" : "default",
+                  opacity: isFuture ? 0.35 : 1,
                 }}
               >
-                <span style={{ fontWeight: 700, fontSize: 15, color: "#172018" }}>
-                  📅 {formatDate(report.date)}
-                </span>
-                <span style={{ fontSize: 12, color: "#667461", lineHeight: 1.5, fontWeight: "normal", display: "block" }}>
-                  {report.summary.length > 45 ? report.summary.slice(0, 45) + "…" : report.summary}
-                </span>
+                {day}
+                {hasReport && (
+                  <span
+                    style={{
+                      display: "block",
+                      width: 5,
+                      height: 5,
+                      borderRadius: "50%",
+                      background: isSelected ? "rgba(255,255,255,0.8)" : "#2f8a43",
+                      marginTop: 2,
+                      flexShrink: 0,
+                    }}
+                  />
+                )}
               </button>
             );
           })}
         </div>
+
+        {/* 图例 */}
+        <div style={{ display: "flex", gap: 16, marginTop: 16, fontSize: 12, color: "#667461", flexWrap: "wrap" }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#2f8a43", display: "inline-block" }} />
+            有学习报告（可点击）
+          </span>
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 12, height: 12, borderRadius: 4, background: "#eef8ec", border: "1px solid #b8dcb7", display: "inline-block" }} />
+            今天
+          </span>
+        </div>
+
+        {state.dailyReports.length === 0 && (
+          <div className="empty" style={{ marginTop: 16 }}>完成今日学习后，Agent 会在这里生成你的专属学习报告。</div>
+        )}
       </section>
 
-      {/* 右侧：报告详情 */}
-      {selected ? (
+      {/* 报告详情（点击日期后展示） */}
+      {selectedReport && (
         <section className="panel">
           <div className="section-title">
-            <h2>📅 {formatDate(selected.date)}</h2>
-            <span>{selected.date}</span>
+            <h2>📅 {formatDate(selectedReport.date)}</h2>
+            <span>{selectedReport.date}</span>
           </div>
-
-          {/* 总结 + 鼓励 */}
           <div className="result-box" style={{ marginBottom: 20 }}>
-            <p style={{ lineHeight: 1.7 }}>{selected.summary}</p>
-            <p style={{ marginTop: 10, color: "#2f8a43", fontWeight: 600 }}>{selected.encouragement}</p>
+            <p style={{ lineHeight: 1.7 }}>{selectedReport.summary}</p>
+            <p style={{ marginTop: 10, color: "#2f8a43", fontWeight: 600 }}>{selectedReport.encouragement}</p>
           </div>
-
-          {/* 掌握较好 */}
-          <h3 style={{ fontSize: 15, fontWeight: 700, color: "#255f32", margin: "0 0 10px", display: "flex", alignItems: "center", gap: 6 }}>
-            ✅ 掌握较好
-          </h3>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: "#255f32", margin: "0 0 10px" }}>✅ 掌握较好</h3>
           <div style={{ display: "grid", gap: 6, marginBottom: 18 }}>
-            {selected.strengths.map((item) => (
+            {selectedReport.strengths.map((item) => (
               <p key={item} className="example" style={{ margin: 0, padding: "8px 12px", background: "#eef8ec", borderRadius: 8 }}>
                 {item}
               </p>
             ))}
           </div>
-
-          {/* 仍需提升 */}
-          <h3 style={{ fontSize: 15, fontWeight: 700, color: "#9a3e24", margin: "0 0 10px", display: "flex", alignItems: "center", gap: 6 }}>
-            📌 仍需提升
-          </h3>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: "#9a3e24", margin: "0 0 10px" }}>📌 仍需提升</h3>
           <div style={{ display: "grid", gap: 6, marginBottom: 18 }}>
-            {selected.weaknesses.map((item) => (
+            {selectedReport.weaknesses.map((item) => (
               <p key={item} className="correction" style={{ margin: 0, padding: "8px 12px", background: "#fff2ec", borderRadius: 8 }}>
                 {item}
               </p>
             ))}
           </div>
-
-          {/* 下一步计划 */}
-          <h3 style={{ fontSize: 15, fontWeight: 700, color: "#172018", margin: "0 0 10px" }}>
-            🗓 下一步计划
-          </h3>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: "#172018", margin: "0 0 10px" }}>🗓 下一步计划</h3>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {selected.nextPlan.map((item) => (
+            {selectedReport.nextPlan.map((item) => (
               <span className="pill" key={item}>{item}</span>
             ))}
           </div>
-        </section>
-      ) : (
-        <section className="panel" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 200 }}>
-          <p className="muted">← 点击左侧日期查看对应报告</p>
         </section>
       )}
     </div>
