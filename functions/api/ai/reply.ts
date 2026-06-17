@@ -16,8 +16,10 @@ export async function onRequestPost(context: { request: Request; env: Env }) {
   const { request, env } = context;
   const body = await request.json().catch(() => ({}));
   const apiKey = String(env.OPENAI_API_KEY ?? "").trim();
-  const messages = Array.isArray((body as any).messages) ? (body as any).messages : [];
-  const scenario = String((body as any).scenario ?? "");
+  const messages = Array.isArray((body as Record<string, unknown>).messages)
+    ? ((body as Record<string, unknown>).messages as Array<Record<string, unknown>>)
+    : [];
+  const scenario = String((body as Record<string, unknown>).scenario ?? "");
 
   if (!apiKey) {
     return Response.json({ error: "Missing OpenAI API key secret" }, { status: 503 });
@@ -34,7 +36,7 @@ export async function onRequestPost(context: { request: Request; env: Env }) {
         model: env.OPENAI_MODEL ?? "gpt-4.1-mini",
         messages: [
           { role: "system", content: `${systemPrompt} 当前口语场景：${scenario}` },
-          ...messages.map((message: any) => ({
+          ...messages.map((message) => ({
             role: message.role === "agent" ? "assistant" : "user",
             content: String(message.text ?? ""),
           })),
@@ -46,8 +48,12 @@ export async function onRequestPost(context: { request: Request; env: Env }) {
       return Response.json({ error: "AI gateway request failed" }, { status: 502 });
     }
 
-    const data: any = await response.json();
-    return Response.json({ reply: String(data.choices?.[0]?.message?.content ?? "Please say it in a complete English sentence.") });
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    return Response.json({
+      reply: String(data.choices?.[0]?.message?.content ?? "Please say it in a complete English sentence."),
+    });
   } catch {
     return Response.json({ error: "AI reply unavailable" }, { status: 502 });
   }

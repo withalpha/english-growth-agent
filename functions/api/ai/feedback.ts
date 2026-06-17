@@ -24,9 +24,9 @@ export async function onRequestPost(context: { request: Request; env: Env }) {
   const { request, env } = context;
   const body = await request.json().catch(() => ({}));
   const apiKey = String(env.OPENAI_API_KEY ?? "").trim();
-  const area = String((body as any).area ?? "vocabulary");
-  const userInput = String((body as any).userInput ?? "");
-  const contextText = String((body as any).context ?? "");
+  const area = String((body as Record<string, unknown>).area ?? "vocabulary");
+  const userInput = String((body as Record<string, unknown>).userInput ?? "");
+  const contextText = String((body as Record<string, unknown>).context ?? "");
 
   if (!apiKey) {
     return Response.json({ error: "Missing OpenAI API key secret" }, { status: 503 });
@@ -58,8 +58,10 @@ export async function onRequestPost(context: { request: Request; env: Env }) {
       return Response.json({ error: "AI gateway request failed" }, { status: 502 });
     }
 
-    const data: any = await response.json();
-    return Response.json(parseJsonContent(data.choices?.[0]?.message?.content));
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    return Response.json(parseJsonContent(data.choices?.[0]?.message?.content ?? ""));
   } catch {
     return Response.json({ error: "AI feedback unavailable" }, { status: 502 });
   }

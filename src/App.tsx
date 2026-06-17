@@ -18,6 +18,7 @@ import type { AppState, ChatMessage, ReviewItem, SkillArea } from "./types";
 
 type Tab = "today" | "diagnosis" | "review" | "knowledge" | "reports";
 type DailyTheme = (typeof dailyThemes)[number];
+type PathStatus = "completed" | "current" | "locked";
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
@@ -28,7 +29,8 @@ const normalize = (text: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
-const hasOnlyChineseEnglish = (text: string) => /^[\u4e00-\u9fa5a-zA-Z0-9\s.,!?'"():;，。！？、：；《》“”‘’+\-/]*$/.test(text);
+const hasOnlyChineseEnglish = (text: string) =>
+  /^[\u4e00-\u9fa5a-zA-Z0-9\s.,!?'"():;\-\/]*$/.test(text);
 
 const DAILY_VOCABULARY_TARGET = 20;
 const DAILY_SPEAKING_TARGET = 5;
@@ -36,9 +38,9 @@ const DAILY_WRITING_TARGET = 5;
 
 const todayPlan = [
   { title: "词汇互动", target: "20 个单词", description: "学习单词含义、例句和真实使用方法" },
-  { title: "口语陪练", target: "5 句话", description: "跟读、改写并用完整句开口表达" },
-  { title: "写作练习", target: "5 句话", description: "中文翻译成英文，检查语法和自然表达" },
-  { title: "集中复习总结", target: "薄弱项复盘", description: "复盘错词、错句和语法问题，没掌握继续滚动复习" },
+  { title: "口语陪练", target: "5 句话", description: "围绕今日主题做简短对话，并拿到即时评价" },
+  { title: "写作练习", target: "5 句话", description: "根据中文写英文，巩固语法和自然表达" },
+  { title: "集中复习总结", target: "复习薄弱项", description: "复盘错词、错句和高频问题，继续滚动巩固" },
 ];
 
 const getDayIndex = () => Math.floor(new Date(getTodayKey()).getTime() / 86400000);
@@ -48,9 +50,9 @@ const getTodayTheme = () => dailyThemes[getDayIndex() % dailyThemes.length];
 const resetTodayProgressForTheme = (theme: DailyTheme) => ({
   date: getTodayKey(),
   themeId: theme.id,
-  vocabulary: { index: 0, selected: "", feedback: "", answered: false },
-  speaking: { messages: [{ role: "agent" as const, text: theme.speaking.opener }], input: "", feedback: "" },
-  writing: { index: 0, answer: "", feedback: "", checked: false },
+  vocabulary: { index: 0, selected: "", feedback: "", answered: false, completed: false },
+  speaking: { messages: [{ role: "agent" as const, text: theme.speaking.opener }], input: "", feedback: "", completed: false },
+  writing: { index: 0, answer: "", feedback: "", checked: false, completed: false },
 });
 
 const diagnosisSpeakingPrompts = [
@@ -107,7 +109,7 @@ export function App() {
           <div className="brand-mark">EN</div>
           <div>
             <strong>英语成长 Agent</strong>
-            <span>20分钟日常交流训练</span>
+            <span>20 分钟日常英语训练</span>
           </div>
         </div>
         <nav>
@@ -166,7 +168,7 @@ function Header({ state }: { state: AppState }) {
       <div className="hero-panel">
         <Sparkles size={20} />
         <strong>AI 云端模式</strong>
-        <span>线上由 Cloudflare Secret 调用模型，不在浏览器保存密钥；不可用时自动离线练习。</span>
+        <span>线上通过 Cloudflare Secret 调用模型，不在浏览器保存密钥；不可用时自动切回离线练习。</span>
       </div>
     </header>
   );
@@ -191,12 +193,22 @@ function TodayView({
     state.progress.today.date === getTodayKey() && state.progress.today.themeId === theme.id
       ? state.progress.today
       : resetTodayProgressForTheme(theme);
+  const speakingUnlocked = todayProgress.vocabulary.completed;
+  const writingUnlocked = todayProgress.speaking.completed;
+  const reviewUnlocked = todayProgress.writing.completed;
+  const pathStatuses: PathStatus[] = [
+    todayProgress.vocabulary.completed ? "completed" : "current",
+    todayProgress.vocabulary.completed ? (todayProgress.speaking.completed ? "completed" : "current") : "locked",
+    todayProgress.speaking.completed ? (todayProgress.writing.completed ? "completed" : "current") : "locked",
+    reviewUnlocked ? "current" : "locked",
+  ];
 
   useEffect(() => {
     if (state.progress.today.date !== getTodayKey() || state.progress.today.themeId !== theme.id) {
       updateProgress((progress) => ({ ...progress, today: resetTodayProgressForTheme(theme) }));
     }
   }, [state.progress.today.date, state.progress.today.themeId, theme, updateProgress]);
+
   const handleComplete = async () => {
     setReporting(true);
     await completeStudy();
@@ -219,9 +231,12 @@ function TodayView({
           <span>{state.lastStudyDate === getTodayKey() ? "今天已完成" : "按顺序完成：词汇 -> 口语 -> 写作"}</span>
         </div>
         <div className="lesson-path">
-          {todayPlan.map((item) => (
-            <div className="path-node" key={item.title}>
+          {todayPlan.map((item, index) => (
+            <div className={`path-node ${pathStatuses[index]}`} key={item.title}>
               <div className="node-dot" />
+              <em className="node-status">
+                {pathStatuses[index] === "completed" ? "已完成" : pathStatuses[index] === "current" ? "进行中" : "未解锁"}
+              </em>
               <strong>{item.title}</strong>
               <span>{item.target}</span>
               <p>{item.description}</p>
@@ -232,39 +247,40 @@ function TodayView({
       <VocabularyPractice
         theme={theme}
         progress={todayProgress.vocabulary}
-        updateProgress={(next) =>
-          updateProgress((current) => ({ ...current, today: { ...todayProgress, vocabulary: next } }))
-        }
-        state={state}
+        updateProgress={(next) => updateProgress((current) => ({ ...current, today: { ...todayProgress, vocabulary: next } }))}
         addReviewItems={addReviewItems}
         addKnowledge={addKnowledge}
       />
-      <SpeakingPractice
-        theme={theme}
-        progress={todayProgress.speaking}
-        updateProgress={(next) => updateProgress((current) => ({ ...current, today: { ...todayProgress, speaking: next } }))}
-        state={state}
-        addReviewItems={addReviewItems}
-        addKnowledge={addKnowledge}
-      />
-      <WritingPractice
-        theme={theme}
-        progress={todayProgress.writing}
-        updateProgress={(next) => updateProgress((current) => ({ ...current, today: { ...todayProgress, writing: next } }))}
-        state={state}
-        addReviewItems={addReviewItems}
-        addKnowledge={addKnowledge}
-      />
-      <section className="panel wide">
-        <div className="section-title">
-          <h2>完成今日学习</h2>
-          <span>轻量打卡</span>
-        </div>
-        <p className="muted">完成练习后点这里，Agent 会评价今天的学习情况，生成学习报告，并根据薄弱项调整之后的计划。</p>
-        <button className="primary full" onClick={handleComplete} disabled={reporting}>
-          <CheckCircle2 size={18} /> {reporting ? "正在生成今日报告..." : "我完成了今天的学习"}
-        </button>
-      </section>
+      {speakingUnlocked && (
+        <SpeakingPractice
+          theme={theme}
+          progress={todayProgress.speaking}
+          updateProgress={(next) => updateProgress((current) => ({ ...current, today: { ...todayProgress, speaking: next } }))}
+          addReviewItems={addReviewItems}
+          addKnowledge={addKnowledge}
+        />
+      )}
+      {writingUnlocked && (
+        <WritingPractice
+          theme={theme}
+          progress={todayProgress.writing}
+          updateProgress={(next) => updateProgress((current) => ({ ...current, today: { ...todayProgress, writing: next } }))}
+          addReviewItems={addReviewItems}
+          addKnowledge={addKnowledge}
+        />
+      )}
+      {reviewUnlocked && (
+        <section className="panel wide">
+          <div className="section-title">
+            <h2>完成今日学习</h2>
+            <span>轻量打卡</span>
+          </div>
+          <p className="muted">完成练习后点这里，Agent 会评价今天的学习情况，生成学习报告，并根据薄弱点调整之后的计划。</p>
+          <button className="primary full" onClick={handleComplete} disabled={reporting}>
+            <CheckCircle2 size={18} /> {reporting ? "正在生成今日报告..." : "我完成了今天的学习"}
+          </button>
+        </section>
+      )}
     </div>
   );
 }
@@ -281,6 +297,7 @@ function DiagnosisView({
   addReviewItems: (items: Parameters<typeof makeReviewItem>[0][]) => void;
 }) {
   const [loading, setLoading] = useState(false);
+  const [speakingNotice, setSpeakingNotice] = useState("");
   const diagnosisProgress = state.progress.diagnosis;
   const setDiagnosisProgress = (next: Partial<typeof diagnosisProgress>) => {
     updateProgress((progress) => ({ ...progress, diagnosis: { ...progress.diagnosis, ...next } }));
@@ -347,13 +364,13 @@ function DiagnosisView({
         speakingLevel,
         writingLevel,
         summary: feedback.summary,
-        strengths: [`词汇诊断正确率 ${vocabScore}%。`, "已经完成口语短答输入，具备开始日常表达训练的基础。"],
+        strengths: [`词汇诊断正确率 ${vocabScore}%`, "已经完成口语短答输入，具备开始日常表达训练的基础。"],
         weaknesses: feedback.corrections,
         plan: [
-          "第1-2周：高频生活词汇 + 完整句回答。",
-          "第3-4周：常见场景口语 + want to, usually, because 等句型。",
-          "第5-6周：集中复习薄弱词句，写作从短句到小段落。",
-          "第7-8周：模拟真实日常对话，提升自然度和准确度。",
+          "第 1-2 周：高频生活词汇 + 完整句回答。",
+          "第 3-4 周：常见场景口语 + want to, usually, because 等句型。",
+          "第 5-6 周：集中复习薄弱词句，写作从短句到小段落。",
+          "第 7-8 周：模拟真实日常对话，提升自然度和准确度。",
         ],
       },
     }));
@@ -386,9 +403,10 @@ function DiagnosisView({
   const saveSpeakingAnswer = () => {
     if (!diagnosisProgress.speakingAnswer.trim()) return;
     if (!hasOnlyChineseEnglish(diagnosisProgress.speakingAnswer)) {
-      setDiagnosisProgress({ vocabFeedback: "请只使用中文或英语继续。Please use Chinese or English only." });
+      setSpeakingNotice("请只使用中文或英语继续。Please use Chinese or English only.");
       return;
     }
+    setSpeakingNotice("");
     setDiagnosisProgress({
       speakingAnswers: [...diagnosisProgress.speakingAnswers, diagnosisProgress.speakingAnswer],
       speakingAnswer: "",
@@ -403,7 +421,7 @@ function DiagnosisView({
     <section className="panel">
       <div className="section-title">
         <h2>首次诊断</h2>
-        <span>20道词汇选择 + 3道口语短答</span>
+        <span>20 道词汇选择 + 3 道口语短答</span>
       </div>
       <div className="diagnosis-grid two-col">
         <div className="result-box">
@@ -446,26 +464,29 @@ function DiagnosisView({
             onChange={(event) => setDiagnosisProgress({ speakingAnswer: event.target.value })}
             placeholder="One English sentence..."
           />
-          <button
-            className="primary full"
-            onClick={saveSpeakingAnswer}
-            disabled={diagnosisProgress.speakingAnswers.length >= diagnosisSpeakingPrompts.length}
-          >
+          <button className="primary full" onClick={saveSpeakingAnswer} disabled={diagnosisProgress.speakingAnswers.length >= diagnosisSpeakingPrompts.length}>
             保存本题回答
           </button>
+          {speakingNotice && <p className="feedback">{speakingNotice}</p>}
           {diagnosisProgress.speakingAnswers.map((answer, idx) => (
-            <p className="example" key={`${answer}-${idx}`}>{idx + 1}. {answer}</p>
+            <p className="example" key={`${answer}-${idx}`}>
+              {idx + 1}. {answer}
+            </p>
           ))}
         </div>
       </div>
       <div className="report-bars">
         <div>
           <span>词汇正确率</span>
-          <div className="bar"><i style={{ width: `${Math.round((diagnosisProgress.vocabCorrect / DAILY_VOCABULARY_TARGET) * 100)}%` }} /></div>
+          <div className="bar">
+            <i style={{ width: `${Math.round((diagnosisProgress.vocabCorrect / DAILY_VOCABULARY_TARGET) * 100)}%` }} />
+          </div>
         </div>
         <div>
           <span>口语完成度</span>
-          <div className="bar"><i style={{ width: `${Math.round((diagnosisProgress.speakingAnswers.length / diagnosisSpeakingPrompts.length) * 100)}%` }} /></div>
+          <div className="bar">
+            <i style={{ width: `${Math.round((diagnosisProgress.speakingAnswers.length / diagnosisSpeakingPrompts.length) * 100)}%` }} />
+          </div>
         </div>
       </div>
       <button
@@ -480,19 +501,6 @@ function DiagnosisView({
       >
         <ClipboardCheck size={18} /> {loading ? "正在生成诊断..." : "生成可视化报告和学习计划"}
       </button>
-      {state.diagnosis.completed && (
-        <div className="result-box">
-          <strong>当前水平</strong>
-          <p>词汇：{state.diagnosis.vocabularyLevel}</p>
-          <p>口语：{state.diagnosis.speakingLevel}</p>
-          <p>写作：{state.diagnosis.writingLevel}</p>
-          {state.diagnosis.plan.map((item) => (
-            <span className="pill" key={item}>
-              {item}
-            </span>
-          ))}
-        </div>
-      )}
     </section>
   );
 }
@@ -501,14 +509,12 @@ function VocabularyPractice({
   theme,
   progress,
   updateProgress,
-  state,
   addReviewItems,
   addKnowledge,
 }: {
   theme: DailyTheme;
   progress: AppState["progress"]["today"]["vocabulary"];
   updateProgress: (progress: AppState["progress"]["today"]["vocabulary"]) => void;
-  state: AppState;
   addReviewItems: (items: Parameters<typeof makeReviewItem>[0][]) => void;
   addKnowledge: (entry: Parameters<typeof makeKnowledgeEntry>[0]) => void;
 }) {
@@ -517,6 +523,7 @@ function VocabularyPractice({
   const questionType = progress.index % 2 === 0 ? "en-to-cn" : "cn-to-en";
   const learnedCount = Math.min(progress.index + 1, DAILY_VOCABULARY_TARGET);
   const correctAnswer = questionType === "en-to-cn" ? card.meaning : card.word;
+  const canUnlockSpeaking = progress.index >= DAILY_VOCABULARY_TARGET - 1 && progress.answered;
   const options = useMemo(() => {
     const pool = cards
       .filter((item) => item.word !== card.word)
@@ -536,14 +543,14 @@ function VocabularyPractice({
       "词汇单选题即时反馈。",
     );
     const nextFeedback = correct
-      ? `答对了。${card.word} 的意思是「${card.meaning}」。${card.example}`
-      : `这题需要巩固。正确答案是「${correctAnswer}」。${result.summary}`;
+      ? `答对了。${card.word} 的意思是 ${card.meaning}。${card.example}`
+      : `这题需要巩固。正确答案是 ${correctAnswer}。${result.summary}`;
     updateProgress({ ...progress, selected: option, answered: true, feedback: nextFeedback });
     addKnowledge({
       area: "vocabulary",
       title: card.word,
       content: `${card.word} = ${card.meaning}`,
-      correction: correct ? "本题回答正确。" : `用户选择了「${option}」，正确答案是「${correctAnswer}」。`,
+      correction: correct ? "本题回答正确。" : `用户选择了 ${option}，正确答案是 ${correctAnswer}。`,
       example: card.example,
     });
     if (!correct) {
@@ -551,7 +558,7 @@ function VocabularyPractice({
         {
           area: "vocabulary",
           title: card.word,
-          prompt: questionType === "en-to-cn" ? `选择 ${card.word} 的中文意思。` : `选择「${card.meaning}」对应的英文单词。`,
+          prompt: questionType === "en-to-cn" ? `选择 ${card.word} 的中文意思。` : `选择 ${card.meaning} 对应的英文单词。`,
           answer: card.example,
           note: `${card.word} = ${card.meaning}`,
           errorCount: 1,
@@ -563,7 +570,7 @@ function VocabularyPractice({
 
   const nextQuestion = () => {
     if (progress.index < DAILY_VOCABULARY_TARGET - 1) {
-      updateProgress({ index: progress.index + 1, selected: "", feedback: "", answered: false });
+      updateProgress({ ...progress, index: progress.index + 1, selected: "", feedback: "", answered: false });
       return;
     }
     updateProgress({ ...progress, selected: "", feedback: "", answered: false });
@@ -573,7 +580,9 @@ function VocabularyPractice({
     <section className="panel">
       <div className="section-title">
         <h2>词汇互动</h2>
-        <span>{theme.domain}主题 {learnedCount}/{DAILY_VOCABULARY_TARGET} 题</span>
+        <span>
+          {theme.domain}主题 {learnedCount}/{DAILY_VOCABULARY_TARGET} 题
+        </span>
       </div>
       <div className="word-card">
         <strong>{questionType === "en-to-cn" ? card.word : card.meaning}</strong>
@@ -594,6 +603,12 @@ function VocabularyPractice({
         <button className="primary" onClick={nextQuestion} disabled={!progress.answered || progress.index >= DAILY_VOCABULARY_TARGET - 1}>
           <CheckCircle2 size={18} /> 下一题
         </button>
+        {canUnlockSpeaking && !progress.completed && (
+          <button className="primary" onClick={() => updateProgress({ ...progress, completed: true })}>
+            <CheckCircle2 size={18} /> 进入口语陪练
+          </button>
+        )}
+        {progress.completed && <span className="pill">词汇互动已完成</span>}
       </div>
       {progress.feedback && <p className="feedback">{progress.feedback}</p>}
     </section>
@@ -604,29 +619,28 @@ function SpeakingPractice({
   theme,
   progress,
   updateProgress,
-  state,
   addReviewItems,
   addKnowledge,
 }: {
   theme: DailyTheme;
   progress: AppState["progress"]["today"]["speaking"];
   updateProgress: (progress: AppState["progress"]["today"]["speaking"]) => void;
-  state: AppState;
   addReviewItems: (items: Parameters<typeof makeReviewItem>[0][]) => void;
   addKnowledge: (entry: Parameters<typeof makeKnowledgeEntry>[0]) => void;
 }) {
   const scenario = theme.speaking;
   const [listening, setListening] = useState(false);
   const userTurns = progress.messages.filter((message) => message.role === "user").length;
+  const canUnlockWriting = userTurns >= DAILY_SPEAKING_TARGET && Boolean(progress.feedback.trim());
 
   const resetScenario = () => {
-    updateProgress({ messages: [{ role: "agent", text: scenario.opener }], input: "", feedback: "" });
+    updateProgress({ ...progress, messages: [{ role: "agent", text: scenario.opener }], input: "", feedback: "" });
   };
 
   const send = async () => {
     if (!progress.input.trim()) return;
     if (!hasOnlyChineseEnglish(progress.input)) {
-      updateProgress({ ...progress, feedback: "请只使用中文或英语继续。Please use Chinese or English only." });
+      updateProgress({ ...progress, feedback: "请只使用中文或英语继续。" });
       return;
     }
     const nextMessages: ChatMessage[] = [...progress.messages, { role: "user", text: progress.input }];
@@ -634,8 +648,8 @@ function SpeakingPractice({
     const turnCount = nextMessages.filter((message) => message.role === "user").length;
     const reply =
       turnCount >= DAILY_SPEAKING_TARGET
-        ? "这个小话题先到这里。You did it. 我们现在做一个简短评价。"
-        : await requestAiReply(nextMessages, `${scenario.title}。请主动引导用户，最多5句内结束本话题。`);
+        ? "This topic is complete. You did it."
+        : await requestAiReply(nextMessages, `${scenario.title}。请主动引导用户，最多 5 句内结束本话题。`);
     updateProgress({ ...progress, messages: [...nextMessages, { role: "agent", text: reply }], input: "" });
     if (turnCount >= DAILY_SPEAKING_TARGET) {
       await finish(nextMessages);
@@ -653,19 +667,18 @@ function SpeakingPractice({
     addKnowledge({
       area: "speaking",
       title: scenario.title,
-      content: userText || "本轮暂无用户英文回答。",
+      content: userText || "本轮暂无用户英语回答。",
       correction: result.corrections.join(" "),
       example: "I usually relax at home because it helps me recharge.",
     });
   };
 
   const nextTopic = () => {
-    updateProgress({ messages: [{ role: "agent", text: scenario.opener }], input: "", feedback: "" });
+    updateProgress({ ...progress, messages: [{ role: "agent", text: scenario.opener }], input: "", feedback: "" });
   };
 
   const startSpeech = () => {
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       updateProgress({ ...progress, feedback: "当前浏览器不支持语音识别，请使用文字输入。" });
       return;
@@ -685,12 +698,14 @@ function SpeakingPractice({
     <section className="panel">
       <div className="section-title">
         <h2>口语陪练</h2>
-        <span>{scenario.title}：{Math.min(userTurns, DAILY_SPEAKING_TARGET)}/{DAILY_SPEAKING_TARGET} 句</span>
+        <span>
+          {scenario.title}：{Math.min(userTurns, DAILY_SPEAKING_TARGET)}/{DAILY_SPEAKING_TARGET} 句
+        </span>
       </div>
       <div className="tip-box">
         <strong>本段对话主题：{scenario.title}</strong>
         <p>{scenario.goal}</p>
-        <p>Agent 会引导你练习，本话题最多 5 句内结束，然后给你评价和巩固建议。</p>
+        <p>Agent 会引导你练习，单个话题最多 5 句，然后给你评价和巩固建议。</p>
       </div>
       <div className="chat-box">
         {progress.messages.map((message, idx) => (
@@ -712,6 +727,12 @@ function SpeakingPractice({
         <button onClick={resetScenario}>重新开始本话题</button>
         <button onClick={nextTopic}>重新练习</button>
         <button onClick={() => finish()}>结束并评价</button>
+        {canUnlockWriting && !progress.completed && (
+          <button className="primary" onClick={() => updateProgress({ ...progress, completed: true })}>
+            <CheckCircle2 size={18} /> 进入写作练习
+          </button>
+        )}
+        {progress.completed && <span className="pill">口语陪练已完成</span>}
       </div>
       {progress.feedback && <p className="feedback">{progress.feedback}</p>}
     </section>
@@ -722,24 +743,23 @@ function WritingPractice({
   theme,
   progress,
   updateProgress,
-  state,
   addReviewItems,
   addKnowledge,
 }: {
   theme: DailyTheme;
   progress: AppState["progress"]["today"]["writing"];
   updateProgress: (progress: AppState["progress"]["today"]["writing"]) => void;
-  state: AppState;
   addReviewItems: (items: Parameters<typeof makeReviewItem>[0][]) => void;
   addKnowledge: (entry: Parameters<typeof makeKnowledgeEntry>[0]) => void;
 }) {
   const lesson = theme.writingLesson;
   const prompt = lesson.prompts[progress.index % lesson.prompts.length];
   const practicedCount = Math.min(progress.index + 1, DAILY_WRITING_TARGET);
+  const canFinishWriting = progress.index >= DAILY_WRITING_TARGET - 1 && progress.checked;
 
   const check = async () => {
     if (!hasOnlyChineseEnglish(progress.answer)) {
-      updateProgress({ ...progress, feedback: "请只使用中文或英语继续。Please use Chinese or English only." });
+      updateProgress({ ...progress, feedback: "请只使用中文或英语继续。" });
       return;
     }
     const expected = normalize(prompt.answer);
@@ -748,7 +768,7 @@ function WritingPractice({
     const result = await requestAiFeedback("writing", progress.answer, `正确参考：${prompt.answer}`);
     const nextFeedback = close
       ? `写得不错。${result.summary} 参考表达：${prompt.answer}`
-      : `别着急，这里我们慢慢修。参考写法是：${prompt.answer}。你可以重点检查动词结构、语序和介词。${result.corrections.join(" ")}`;
+      : `别着急，参考写法是：${prompt.answer}。你可以重点看句子结构、词序和介词。${result.corrections.join(" ")}`;
     updateProgress({ ...progress, checked: true, feedback: nextFeedback });
     addKnowledge({
       area: "writing",
@@ -774,7 +794,7 @@ function WritingPractice({
 
   const nextWritingQuestion = () => {
     if (progress.index < DAILY_WRITING_TARGET - 1) {
-      updateProgress({ index: progress.index + 1, answer: "", feedback: "", checked: false });
+      updateProgress({ ...progress, index: progress.index + 1, answer: "", feedback: "", checked: false });
       return;
     }
     updateProgress({ ...progress, answer: "", feedback: "", checked: false });
@@ -784,22 +804,34 @@ function WritingPractice({
     <section className="panel">
       <div className="section-title">
         <h2>写作练习</h2>
-        <span>今日 {practicedCount}/{DAILY_WRITING_TARGET} 句话</span>
+        <span>
+          今日 {practicedCount}/{DAILY_WRITING_TARGET} 句
+        </span>
       </div>
       <div className="tip-box">
         <strong>今日语法：{lesson.grammar}</strong>
         <p>{lesson.tip}</p>
         {lesson.examples.map((example) => (
-          <p className="example" key={example}>{example}</p>
+          <p className="example" key={example}>
+            {example}
+          </p>
         ))}
       </div>
       <p className="muted">请翻译：{prompt.zh}</p>
       <textarea value={progress.answer} onChange={(event) => updateProgress({ ...progress, answer: event.target.value })} placeholder="Write your English sentence..." />
       <div className="actions">
-        <button onClick={nextWritingQuestion} disabled={!progress.checked || progress.index >= DAILY_WRITING_TARGET - 1}>下一句话</button>
+        <button onClick={nextWritingQuestion} disabled={!progress.checked || progress.index >= DAILY_WRITING_TARGET - 1}>
+          下一句
+        </button>
         <button className="primary" onClick={check}>
           <BookOpen size={18} /> 检查写作
         </button>
+        {canFinishWriting && !progress.completed && (
+          <button className="primary" onClick={() => updateProgress({ ...progress, completed: true })}>
+            <CheckCircle2 size={18} /> 完成今日练习
+          </button>
+        )}
+        {progress.completed && <span className="pill">写作练习已完成</span>}
       </div>
       {progress.feedback && <p className="feedback">{progress.feedback}</p>}
     </section>
@@ -926,9 +958,7 @@ function ReportsView({ state }: { state: AppState }) {
         <h2>我的学习报告</h2>
         <span>{state.dailyReports.length} 份报告</span>
       </div>
-      {!latestReport && (
-        <div className="empty">完成今日学习后，Agent 会在这里生成你的专属学习报告。</div>
-      )}
+      {!latestReport && <div className="empty">完成今日学习后，Agent 会在这里生成你的专属学习报告。</div>}
       {latestReport && (
         <div className="result-box">
           <strong>当前学习状态</strong>
@@ -944,15 +974,21 @@ function ReportsView({ state }: { state: AppState }) {
             <p>{report.summary}</p>
             <h3>掌握较好</h3>
             {report.strengths.map((item) => (
-              <p className="example" key={item}>{item}</p>
+              <p className="example" key={item}>
+                {item}
+              </p>
             ))}
             <h3>仍需提升</h3>
             {report.weaknesses.map((item) => (
-              <p className="correction" key={item}>{item}</p>
+              <p className="correction" key={item}>
+                {item}
+              </p>
             ))}
             <h3>之后计划</h3>
             {report.nextPlan.map((item) => (
-              <span className="pill" key={item}>{item}</span>
+              <span className="pill" key={item}>
+                {item}
+              </span>
             ))}
             <p className="feedback">{report.encouragement}</p>
           </article>

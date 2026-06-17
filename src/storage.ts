@@ -11,6 +11,27 @@ const todayKey = () => new Date().toISOString().slice(0, 10);
 
 const getDefaultTheme = () => dailyThemes[Math.floor(new Date(todayKey()).getTime() / 86400000) % dailyThemes.length];
 
+const inferVocabularyCompleted = (value: unknown) => {
+  const progress = value as { index?: number; answered?: boolean; completed?: boolean } | undefined;
+  if (typeof progress?.completed === "boolean") return progress.completed;
+  return (progress?.index ?? 0) >= 19 && progress?.answered === true;
+};
+
+const inferSpeakingCompleted = (value: unknown) => {
+  const progress = value as { messages?: { role?: string }[]; feedback?: string; completed?: boolean } | undefined;
+  if (typeof progress?.completed === "boolean") return progress.completed;
+  const userMessages = Array.isArray(progress?.messages)
+    ? progress.messages.filter((message) => message?.role === "user").length
+    : 0;
+  return userMessages >= 5 && Boolean(progress?.feedback?.trim());
+};
+
+const inferWritingCompleted = (value: unknown) => {
+  const progress = value as { index?: number; checked?: boolean; completed?: boolean } | undefined;
+  if (typeof progress?.completed === "boolean") return progress.completed;
+  return (progress?.index ?? 0) >= 4 && progress?.checked === true;
+};
+
 const withReviewMeta = (
   item: Omit<ReviewItem, "id" | "createdAt" | "updatedAt" | "nextReviewAt">,
 ): ReviewItem => ({
@@ -52,17 +73,20 @@ export const defaultState = (): AppState => ({
         selected: "",
         feedback: "",
         answered: false,
+        completed: false,
       },
       speaking: {
         messages: [{ role: "agent", text: getDefaultTheme().speaking.opener }],
         input: "",
         feedback: "",
+        completed: false,
       },
       writing: {
         index: 0,
         answer: "",
         feedback: "",
         checked: false,
+        completed: false,
       },
     },
   },
@@ -75,6 +99,11 @@ export const loadState = (): AppState => {
     if (!raw) return defaultState();
     const defaults = defaultState();
     const parsed = JSON.parse(raw);
+    const parsedToday = parsed.progress?.today ?? {};
+    const parsedVocabulary = parsedToday.vocabulary ?? {};
+    const parsedSpeaking = parsedToday.speaking ?? {};
+    const parsedWriting = parsedToday.writing ?? {};
+
     return {
       ...defaults,
       diagnosis: { ...defaults.diagnosis, ...parsed.diagnosis },
@@ -83,7 +112,25 @@ export const loadState = (): AppState => {
       dailyReports: Array.isArray(parsed.dailyReports) ? parsed.dailyReports : defaults.dailyReports,
       progress: {
         diagnosis: { ...defaults.progress.diagnosis, ...parsed.progress?.diagnosis },
-        today: { ...defaults.progress.today, ...parsed.progress?.today },
+        today: {
+          ...defaults.progress.today,
+          ...parsedToday,
+          vocabulary: {
+            ...defaults.progress.today.vocabulary,
+            ...parsedVocabulary,
+            completed: inferVocabularyCompleted(parsedVocabulary),
+          },
+          speaking: {
+            ...defaults.progress.today.speaking,
+            ...parsedSpeaking,
+            completed: inferSpeakingCompleted(parsedSpeaking),
+          },
+          writing: {
+            ...defaults.progress.today.writing,
+            ...parsedWriting,
+            completed: inferWritingCompleted(parsedWriting),
+          },
+        },
       },
       streakDays: Number(parsed.streakDays ?? defaults.streakDays),
       lastStudyDate: parsed.lastStudyDate,

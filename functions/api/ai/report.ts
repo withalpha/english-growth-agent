@@ -24,7 +24,7 @@ export async function onRequestPost(context: { request: Request; env: Env }) {
   const { request, env } = context;
   const body = await request.json().catch(() => ({}));
   const apiKey = String(env.OPENAI_API_KEY ?? "").trim();
-  const state = (body as any).state ?? {};
+  const state = (body as Record<string, unknown>).state ?? {};
 
   if (!apiKey) {
     return Response.json({ error: "Missing OpenAI API key secret" }, { status: 503 });
@@ -46,9 +46,9 @@ export async function onRequestPost(context: { request: Request; env: Env }) {
             content:
               "请根据用户今天的英语学习数据生成一份中文为主、英文例句为辅的学习报告，只使用中文和英语。返回 JSON：summary, strengths, weaknesses, encouragement, nextPlan。\n" +
               JSON.stringify({
-                diagnosis: state.diagnosis,
-                reviewItems: state.reviewItems?.slice?.(0, 20) ?? [],
-                knowledge: state.knowledge?.slice?.(0, 20) ?? [],
+                diagnosis: (state as Record<string, unknown>).diagnosis,
+                reviewItems: ((state as Record<string, unknown>).reviewItems as unknown[] | undefined)?.slice?.(0, 20) ?? [],
+                knowledge: ((state as Record<string, unknown>).knowledge as unknown[] | undefined)?.slice?.(0, 20) ?? [],
               }),
           },
         ],
@@ -60,8 +60,10 @@ export async function onRequestPost(context: { request: Request; env: Env }) {
       return Response.json({ error: "AI gateway request failed" }, { status: 502 });
     }
 
-    const data: any = await response.json();
-    return Response.json(parseJsonContent(data.choices?.[0]?.message?.content));
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    return Response.json(parseJsonContent(data.choices?.[0]?.message?.content ?? ""));
   } catch {
     return Response.json({ error: "AI report unavailable" }, { status: 502 });
   }

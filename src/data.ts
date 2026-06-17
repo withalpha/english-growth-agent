@@ -1,185 +1,39 @@
 import type { ReviewItem, SkillArea } from "./types";
 
 export const vocabularyCards = [
-  {
-    word: "appointment",
-    meaning: "预约，约定",
-    example: "I have a dentist appointment this afternoon.",
-    prompt: "我今天下午有一个牙医预约。",
-  },
-  {
-    word: "recommend",
-    meaning: "推荐",
-    example: "Can you recommend a good restaurant nearby?",
-    prompt: "你能推荐附近一家好餐厅吗？",
-  },
-  {
-    word: "available",
-    meaning: "有空的，可用的",
-    example: "Are you available after work?",
-    prompt: "你下班后有空吗？",
-  },
-  {
-    word: "comfortable",
-    meaning: "舒服的，自在的",
-    example: "I feel comfortable speaking English with you.",
-    prompt: "和你说英语我觉得很自在。",
-  },
-  {
-    word: "actually",
-    meaning: "其实，实际上",
-    example: "Actually, I prefer tea to coffee.",
-    prompt: "其实，比起咖啡我更喜欢茶。",
-  },
-  {
-    word: "probably",
-    meaning: "很可能，大概",
-    example: "I will probably stay at home tonight.",
-    prompt: "我今晚可能会待在家里。",
-  },
-  {
-    word: "usually",
-    meaning: "通常",
-    example: "I usually take a walk after dinner.",
-    prompt: "我通常晚饭后散步。",
-  },
-  {
-    word: "prefer",
-    meaning: "更喜欢",
-    example: "I prefer simple English sentences.",
-    prompt: "我更喜欢简单的英文句子。",
-  },
-  {
-    word: "improve",
-    meaning: "提高，改善",
-    example: "I want to improve my speaking skills.",
-    prompt: "我想提高我的口语能力。",
-  },
-  {
-    word: "practice",
-    meaning: "练习",
-    example: "I practice English for twenty minutes every day.",
-    prompt: "我每天练习英语20分钟。",
-  },
-  {
-    word: "confident",
-    meaning: "自信的",
-    example: "I feel more confident when I speak slowly.",
-    prompt: "当我慢慢说时，我更自信。",
-  },
-  {
-    word: "explain",
-    meaning: "解释",
-    example: "Could you explain this word again?",
-    prompt: "你能再解释一下这个单词吗？",
-  },
-  {
-    word: "understand",
-    meaning: "理解",
-    example: "I understand the main idea.",
-    prompt: "我理解主要意思。",
-  },
-  {
-    word: "remember",
-    meaning: "记得，记住",
-    example: "I remember this phrase because I use it often.",
-    prompt: "我记得这个短语，因为我经常用它。",
-  },
-  {
-    word: "forget",
-    meaning: "忘记",
-    example: "I sometimes forget new words.",
-    prompt: "我有时候会忘记新单词。",
-  },
-  {
-    word: "prepare",
-    meaning: "准备",
-    example: "I need to prepare for tomorrow's meeting.",
-    prompt: "我需要为明天的会议做准备。",
-  },
-  {
-    word: "important",
-    meaning: "重要的",
-    example: "Daily practice is important for learning English.",
-    prompt: "每日练习对学习英语很重要。",
-  },
-  {
-    word: "interesting",
-    meaning: "有趣的",
-    example: "This topic is interesting to me.",
-    prompt: "这个话题对我来说很有趣。",
-  },
-  {
-    word: "busy",
-    meaning: "忙的",
-    example: "I am busy today, but I can study for twenty minutes.",
-    prompt: "我今天很忙，但我可以学习20分钟。",
-  },
-  {
-    word: "relax",
-    meaning: "放松",
-    example: "I like to relax after work.",
-    prompt: "我喜欢下班后放松。",
-  },
-];
-
-export const speakingScenarios = [
-  {
-    title: "咖啡店点单",
-    opener: "Hi! What would you like to order today?",
-    goal: "用英文点饮品、说明偏好，并礼貌回应。",
-  },
-  {
-    title: "认识新朋友",
-    opener: "Nice to meet you! What do you usually do after work?",
-    goal: "介绍自己的日常兴趣，并追问对方。",
-  },
-  {
-    title: "问路",
-    opener: "Sure, where are you trying to go?",
-    goal: "说明目的地、听懂方向，并表达感谢。",
-  },
-  {
-    title: "周末计划",
-    opener: "What are you planning to do this weekend?",
-    goal: "用英文说周末安排，并补充一个原因。",
-  },
-  {
-    title: "学习英语",
-    opener: "Why do you want to improve your English?",
-    goal: "说明学习英语的原因和目标。",
-  },
+  { word: "appointment", meaning: "预约，约定", example: "I have a dentist appointment this afternoon.", prompt: "我今天下午有一个牙医预约。" },
+  { word: "recommend", meaning: "推荐", example: "Can you recommend a good restaurant nearby?", prompt: "你能推荐附近一家好餐厅吗？" },
+  { word: "available", meaning: "有空的，可用的", example: "Are you available after work?", prompt: "你下班后有空吗？" },
+  { word: "comfortable", meaning: "舒服的，自在的", example: "I feel comfortable speaking English with you.", prompt: "和你说英语我觉得很自在。" },
+  { word: "actually", meaning: "其实，实际上", example: "Actually, I prefer tea to coffee.", prompt: "其实，比起咖啡我更喜欢茶。" },
+  { word: "probably", meaning: "很可能，大概", example: "I will probably stay at home tonight.", prompt: "我今晚可能会待在家里。" },
+  { word: "usually", meaning: "通常", example: "I usually take a walk after dinner.", prompt: "我通常晚饭后散步。" },
+  { word: "prefer", meaning: "更喜欢", example: "I prefer simple English sentences.", prompt: "我更喜欢简单的英文句子。" },
+  { word: "improve", meaning: "提高，改善", example: "I want to improve my speaking skills.", prompt: "我想提高我的口语能力。" },
+  { word: "practice", meaning: "练习", example: "I practice English for twenty minutes every day.", prompt: "我每天练习英语20分钟。" },
+  { word: "confident", meaning: "自信的", example: "I feel more confident when I speak slowly.", prompt: "当我慢慢说时，我更自信。" },
+  { word: "explain", meaning: "解释", example: "Could you explain this word again?", prompt: "你能再解释一下这个单词吗？" },
+  { word: "understand", meaning: "理解", example: "I understand the main idea.", prompt: "我理解主要意思。" },
+  { word: "remember", meaning: "记得，记住", example: "I remember this phrase because I use it often.", prompt: "我记得这个短语，因为我经常用它。" },
+  { word: "forget", meaning: "忘记", example: "I sometimes forget new words.", prompt: "我有时候会忘记新单词。" },
+  { word: "prepare", meaning: "准备", example: "I need to prepare for tomorrow's meeting.", prompt: "我需要为明天的会议做准备。" },
+  { word: "important", meaning: "重要的", example: "Daily practice is important for learning English.", prompt: "每日练习对学习英语很重要。" },
+  { word: "interesting", meaning: "有趣的", example: "This topic is interesting to me.", prompt: "这个话题对我来说很有趣。" },
+  { word: "busy", meaning: "忙的", example: "I am busy today, but I can study for twenty minutes.", prompt: "我今天很忙，但我可以学习20分钟。" },
+  { word: "relax", meaning: "放松", example: "I like to relax after work.", prompt: "我喜欢下班后放松。" },
 ];
 
 export const writingLessons = [
   {
     grammar: "want to + 动词原形",
     tip: "表达“想要做某事”时，用 want to + 动词原形。不要写 want improve，要写 want to improve。",
-    examples: [
-      "I want to improve my spoken English.",
-      "I want to practice English every day.",
-    ],
+    examples: ["I want to improve my spoken English.", "I want to practice English every day."],
     prompts: [
-      {
-        zh: "我想提高我的英语口语。",
-        answer: "I want to improve my spoken English.",
-      },
-      {
-        zh: "我想每天练习英语。",
-        answer: "I want to practice English every day.",
-      },
-      {
-        zh: "我想学习更多日常单词。",
-        answer: "I want to learn more daily words.",
-      },
-      {
-        zh: "我想说得更自然。",
-        answer: "I want to speak more naturally.",
-      },
-      {
-        zh: "我想用英语和朋友聊天。",
-        answer: "I want to chat with friends in English.",
-      },
+      { zh: "我想提高我的英语口语。", answer: "I want to improve my spoken English." },
+      { zh: "我想每天练习英语。", answer: "I want to practice English every day." },
+      { zh: "我想学习更多日常单词。", answer: "I want to learn more daily words." },
+      { zh: "我想说得更自然。", answer: "I want to speak more naturally." },
+      { zh: "我想用英语和朋友聊天。", answer: "I want to chat with friends in English." },
     ],
   },
 ];
