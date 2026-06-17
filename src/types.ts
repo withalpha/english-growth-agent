@@ -98,6 +98,10 @@ export interface AppState {
   progress: LearningProgress;
   streakDays: number;
   lastStudyDate?: string;
+  /** 下次学习的主题 ID（由完成今日学习后自动预选）*/
+  nextThemeId?: string;
+  /** 已完成的主题 ID 列表（用于避免重复）*/
+  completedThemeIds?: string[];
 }
 
 export interface ChatMessage {

@@ -74,6 +74,38 @@ const getDayIndex = () => Math.floor(new Date(getTodayKey()).getTime() / 8640000
 
 const getTodayTheme = () => dailyThemes[getDayIndex() % dailyThemes.length];
 
+/**
+ * 根据用户已完成的主题历史，选择今日主题。
+ * 优先使用 nextThemeId（完成前一天时预选的），
+ * 否则选一个用户还没完成过的主题，
+ * 如果全部完成过则重新开始轮换。
+ */
+const getThemeForToday = (state: AppState): (typeof dailyThemes)[0] => {
+  // 如果有预选的下一主题，直接使用
+  if (state.nextThemeId) {
+    const preset = dailyThemes.find((t) => t.id === state.nextThemeId);
+    if (preset) return preset;
+  }
+  // 找一个还没做过的主题
+  const done = new Set(state.completedThemeIds ?? []);
+  const fresh = dailyThemes.find((t) => !done.has(t.id));
+  if (fresh) return fresh;
+  // 全部完成过了 → 从头轮换（按天索引），给用户重新复习机会
+  return getTodayTheme();
+};
+
+/**
+ * 在已完成主题列表中选出下一个未完成的主题 ID。
+ * 用于完成今日学习后预选明天的主题。
+ */
+const pickNextThemeId = (currentThemeId: string, completedThemeIds: string[]): string => {
+  const updated = [...completedThemeIds, currentThemeId];
+  const doneSet = new Set(updated);
+  const next = dailyThemes.find((t) => !doneSet.has(t.id));
+  // 如果全部做完了，从头选（排除当前主题）
+  return (next ?? dailyThemes.find((t) => t.id !== currentThemeId) ?? dailyThemes[0]).id;
+};
+
 const resetTodayProgressForTheme = (theme: DailyTheme) => ({
   date: getTodayKey(),
   themeId: theme.id,
@@ -151,7 +183,18 @@ export function App() {
       const today = getTodayKey();
       const streakDays = current.lastStudyDate === today ? current.streakDays : current.streakDays + 1;
       const otherReports = current.dailyReports.filter((item) => item.date !== today);
-      return { ...current, lastStudyDate: today, streakDays, dailyReports: [makeDailyReport(report), ...otherReports] };
+      // 记录本次主题，并预选明天的主题（避免重复）
+      const currentThemeId = current.progress.today.themeId;
+      const updatedCompleted = [...(current.completedThemeIds ?? []), currentThemeId].slice(-dailyThemes.length);
+      const nextThemeId = pickNextThemeId(currentThemeId, current.completedThemeIds ?? []);
+      return {
+        ...current,
+        lastStudyDate: today,
+        streakDays,
+        dailyReports: [makeDailyReport(report), ...otherReports],
+        completedThemeIds: updatedCompleted,
+        nextThemeId,
+      };
     });
   };
 
@@ -260,7 +303,7 @@ function TodayView({
   onNavigateToReports: () => void;
 }) {
   const [reporting, setReporting] = useState(false);
-  const theme = getTodayTheme();
+  const theme = getThemeForToday(state);
   // 上一次全部完成且日期变了才重置，否则继续昨天的进度
   const prevAllCompleted =
     state.progress.today.vocabulary.completed &&
@@ -317,15 +360,18 @@ function TodayView({
     setReporting(false);
   };
 
-  // 强制重置今日进度（用于状态不一致时的紧急逃生）
+  // 强制重置今日进度，切换到下一个未完成的主题（用于状态不一致时的紧急逃生）
   const forceNewDay = () => {
-    const theme = getTodayTheme();
+    const currentThemeId = state.progress.today.themeId;
+    const nextId = pickNextThemeId(currentThemeId, state.completedThemeIds ?? []);
+    const nextTheme = dailyThemes.find((t) => t.id === nextId) ?? getTodayTheme();
     updateState((current) => ({
       ...current,
       lastStudyDate: undefined,
+      nextThemeId: undefined,
       progress: {
         ...current.progress,
-        today: resetTodayProgressForTheme(theme),
+        today: resetTodayProgressForTheme(nextTheme),
       },
     }));
   };
