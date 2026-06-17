@@ -104,9 +104,30 @@ export function App() {
       if (cancelled) return;
       setCurrentUser(user);
       if (cloudState) {
-        // 云端有数据：以云端为准并更新本地缓存
-        setState(cloudState);
-        saveState(cloudState);
+        // 应用与 TodayView 相同的日期重置逻辑：
+        // 如果云端记录的是昨天（或更早）且昨天已全部完成，则重置今日进度，开始新一天
+        const todayKey = getTodayKey();
+        const cloudTodayDate = cloudState.progress.today.date;
+        const cloudAllCompleted =
+          cloudState.progress.today.vocabulary.completed &&
+          cloudState.progress.today.speaking.completed &&
+          cloudState.progress.today.writing.completed;
+
+        let finalState = cloudState;
+        if (cloudTodayDate !== todayKey && cloudAllCompleted) {
+          // 新的一天且前一天已完成 → 重置今日进度
+          const theme = getTodayTheme();
+          finalState = {
+            ...cloudState,
+            progress: {
+              ...cloudState.progress,
+              today: resetTodayProgressForTheme(theme),
+            },
+          };
+        }
+
+        setState(finalState);
+        saveState(finalState);
       }
     });
     return () => { cancelled = true; };
