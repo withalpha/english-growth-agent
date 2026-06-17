@@ -204,6 +204,7 @@ export function App() {
             addKnowledge={addKnowledge}
             completeStudy={completeStudy}
             updateProgress={updateProgress}
+            onNavigateToReports={() => setActiveTab("reports")}
           />
         )}
         {activeTab === "diagnosis" && (
@@ -240,12 +241,14 @@ function TodayView({
   addKnowledge,
   completeStudy,
   updateProgress,
+  onNavigateToReports,
 }: {
   state: AppState;
   addReviewItems: (items: Parameters<typeof makeReviewItem>[0][]) => void;
   addKnowledge: (entry: Parameters<typeof makeKnowledgeEntry>[0]) => void;
   completeStudy: () => Promise<void>;
   updateProgress: (progress: AppState["progress"] | ((current: AppState["progress"]) => AppState["progress"])) => void;
+  onNavigateToReports: () => void;
 }) {
   const [reporting, setReporting] = useState(false);
   const theme = getTodayTheme();
@@ -262,11 +265,13 @@ function TodayView({
   const speakingUnlocked = todayProgress.vocabulary.completed;
   const writingUnlocked = todayProgress.speaking.completed;
   const reviewUnlocked = todayProgress.writing.completed;
+  // 用户点击"我完成了今天的学习"并生成报告后，lastStudyDate === today，集中复习总结标记为已完成
+  const reviewCompleted = state.lastStudyDate === getTodayKey();
   const pathStatuses: PathStatus[] = [
     todayProgress.vocabulary.completed ? "completed" : "current",
     todayProgress.vocabulary.completed ? (todayProgress.speaking.completed ? "completed" : "current") : "locked",
     todayProgress.speaking.completed ? (todayProgress.writing.completed ? "completed" : "current") : "locked",
-    reviewUnlocked ? "current" : "locked",
+    reviewCompleted ? "completed" : reviewUnlocked ? "current" : "locked",
   ];
 
   // 只有上一次学习「全部完成」（词汇+口语+写作均 completed）且日期已变，才开始新一天。
@@ -294,6 +299,74 @@ function TodayView({
     await completeStudy();
     setReporting(false);
   };
+
+  // 今日全部完成（包括报告已生成）→ 展示只读总结，不允许重复练习
+  if (reviewCompleted) {
+    const currentThemeIndex = dailyThemes.findIndex((t) => t.id === theme.id);
+    const nextTheme = dailyThemes[(currentThemeIndex + 1) % dailyThemes.length];
+    return (
+      <div className="lesson-flow">
+        <section className="theme-stage">
+          <div>
+            <span className="eyebrow">Today's Theme</span>
+            <h2>{theme.title}</h2>
+            <p>{theme.description}</p>
+          </div>
+          <div className="theme-badge">{theme.domain}</div>
+        </section>
+        <section className="panel wide">
+          <div className="section-title">
+            <h2>今日学习路径</h2>
+            <span>今天已全部完成 ✅</span>
+          </div>
+          <div className="lesson-path">
+            {todayPlan.map((item) => (
+              <div className="path-node completed" key={item.title}>
+                <div className="node-dot" />
+                <em className="node-status">已完成</em>
+                <strong>{item.title}</strong>
+                <span>{item.target}</span>
+                <p>{item.description}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+        <section className="panel wide">
+          <div className="section-title">
+            <h2>🎉 今日学习全部完成！</h2>
+            <span>明天再来继续</span>
+          </div>
+          <p className="muted">
+            你完成了今天全部的词汇互动、口语陪练、写作练习和集中复习，学习报告已生成保存。
+          </p>
+          <div
+            style={{
+              marginTop: 16,
+              padding: 16,
+              background: "linear-gradient(135deg,#eef8ec,#f3fbf2)",
+              borderRadius: 12,
+              border: "1px solid #b8dcb7",
+            }}
+          >
+            <span style={{ fontSize: 12, color: "#667461", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+              明日学习主题（AI 根据今日学习成果安排）
+            </span>
+            <strong style={{ display: "block", marginTop: 8, fontSize: 18, color: "#172018" }}>
+              {nextTheme.title}
+            </strong>
+            <p style={{ margin: "6px 0 0", color: "#667461", fontSize: 14, lineHeight: 1.6 }}>
+              {nextTheme.description}
+            </p>
+          </div>
+          <div className="actions">
+            <button className="primary" onClick={onNavigateToReports}>
+              <FileText size={18} /> 查看今日学习报告
+            </button>
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="lesson-flow">
