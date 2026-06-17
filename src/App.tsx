@@ -210,6 +210,7 @@ export function App() {
             addKnowledge={addKnowledge}
             completeStudy={completeStudy}
             updateProgress={updateProgress}
+            updateState={updateState}
             onNavigateToReports={() => setActiveTab("reports")}
           />
         )}
@@ -247,6 +248,7 @@ function TodayView({
   addKnowledge,
   completeStudy,
   updateProgress,
+  updateState,
   onNavigateToReports,
 }: {
   state: AppState;
@@ -254,6 +256,7 @@ function TodayView({
   addKnowledge: (entry: Parameters<typeof makeKnowledgeEntry>[0]) => void;
   completeStudy: () => Promise<void>;
   updateProgress: (progress: AppState["progress"] | ((current: AppState["progress"]) => AppState["progress"])) => void;
+  updateState: (next: AppState | ((current: AppState) => AppState)) => void;
   onNavigateToReports: () => void;
 }) {
   const [reporting, setReporting] = useState(false);
@@ -271,11 +274,16 @@ function TodayView({
   const speakingUnlocked = todayProgress.vocabulary.completed;
   const writingUnlocked = todayProgress.speaking.completed;
   const reviewUnlocked = todayProgress.writing.completed;
-  // 只有当：1) 报告是今天生成的 且 2) 今日进度记录的日期也是今天，才视为"今日已完成"
-  // 双重检查防止跨天时旧状态误触发完成视图
+  // 完成视图需同时满足：
+  // 1. 报告是今天生成的
+  // 2. 今日进度确实是今天的
+  // 3. 三个模块都真正完成了（防止 KV 状态不一致时误显示完成视图）
   const reviewCompleted =
     state.lastStudyDate === getTodayKey() &&
-    todayProgress.date === getTodayKey();
+    todayProgress.date === getTodayKey() &&
+    todayProgress.vocabulary.completed &&
+    todayProgress.speaking.completed &&
+    todayProgress.writing.completed;
   const pathStatuses: PathStatus[] = [
     todayProgress.vocabulary.completed ? "completed" : "current",
     todayProgress.vocabulary.completed ? (todayProgress.speaking.completed ? "completed" : "current") : "locked",
@@ -307,6 +315,19 @@ function TodayView({
     setReporting(true);
     await completeStudy();
     setReporting(false);
+  };
+
+  // 强制重置今日进度（用于状态不一致时的紧急逃生）
+  const forceNewDay = () => {
+    const theme = getTodayTheme();
+    updateState((current) => ({
+      ...current,
+      lastStudyDate: undefined,
+      progress: {
+        ...current.progress,
+        today: resetTodayProgressForTheme(theme),
+      },
+    }));
   };
 
   // 今日全部完成（包括报告已生成）→ 展示只读总结，不允许重复练习
@@ -370,6 +391,9 @@ function TodayView({
           <div className="actions">
             <button className="primary" onClick={onNavigateToReports}>
               <FileText size={18} /> 查看今日学习报告
+            </button>
+            <button onClick={forceNewDay} style={{ color: "#667461", fontSize: 13 }}>
+              🔄 开始新的学习
             </button>
           </div>
         </section>
