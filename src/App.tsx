@@ -799,14 +799,15 @@ function VocabularyPractice({
       ? `答对了。${card.word} 的意思是 ${card.meaning}。${card.example}`
       : `这题需要巩固。正确答案是 ${correctAnswer}。${result.summary}`;
     updateProgress({ ...progress, selected: option, answered: true, feedback: nextFeedback });
-    addKnowledge({
-      area: "vocabulary",
-      title: card.word,
-      content: `${card.word} = ${card.meaning}`,
-      correction: correct ? "本题回答正确。" : `用户选择了 ${option}，正确答案是 ${correctAnswer}。`,
-      example: card.example,
-    });
+    // 只有答错时才记录到知识库（知识库只收录错误和需要巩固的内容）
     if (!correct) {
+      addKnowledge({
+        area: "vocabulary",
+        title: card.word,
+        content: `${card.word} = ${card.meaning}`,
+        correction: `用户选择了 ${option}，正确答案是 ${correctAnswer}。`,
+        example: card.example,
+      });
       addReviewItems([
         {
           area: "vocabulary",
@@ -1010,13 +1011,16 @@ function SpeakingPractice({
     const result = await requestAiFeedback("speaking", userText, scenario.goal);
     updateProgress({ ...progress, messages: sourceMessages, input: "", feedback: `${result.score}分：${result.summary} ${result.corrections.join(" ")}` });
     addReviewItems(result.reviewItems);
-    addKnowledge({
-      area: "speaking",
-      title: scenario.title,
-      content: userText || "本轮暂无用户英语回答。",
-      correction: result.corrections.join(" "),
-      example: "I usually relax at home because it helps me recharge.",
-    });
+    // 只有口语有改进建议时才记录到知识库
+    if (result.corrections.length > 0) {
+      addKnowledge({
+        area: "speaking",
+        title: scenario.title,
+        content: userText || "本轮暂无用户英语回答。",
+        correction: result.corrections.join(" "),
+        example: "I usually relax at home because it helps me recharge.",
+      });
+    }
   };
 
   const nextTopic = () => {
@@ -1242,13 +1246,7 @@ function WritingPractice({
     if (actual === expected) {
       updateProgress({ ...progress, answer: assembled, feedback: currentPrompt.answer, checked: true });
       speakText(currentPrompt.answer);
-      addKnowledge({
-        area: "writing",
-        title: lesson.grammar,
-        content: `中文：${currentPrompt.zh}\n正确答案：${currentPrompt.answer}`,
-        correction: "拼词正确。",
-        example: currentPrompt.answer,
-      });
+      // 拼词正确：不记录到知识库（只记录需要巩固的错误内容）
     } else {
       const newWrong = wrongAttempts + 1;
       setWrongAttempts(newWrong);
@@ -1274,14 +1272,15 @@ function WritingPractice({
       : `❌ 需要调整。${result.summary} ${result.corrections.join(" ")}`;
     // 无论 AI 评分高低，都解锁"下一句"按钮，让用户可以继续学习
     updateProgress({ ...progress, checked: true, feedback });
-    addKnowledge({
-      area: "writing",
-      title: lesson.grammar,
-      content: `中文：${currentPrompt.zh}\n你的答案：${progress.answer}`,
-      correction: result.corrections.join(" ") || "已通过。",
-      example: currentPrompt.answer,
-    });
+    // 只有写作不达标时才记录错误到知识库
     if (!correct) {
+      addKnowledge({
+        area: "writing",
+        title: lesson.grammar,
+        content: `中文：${currentPrompt.zh}\n你的答案：${progress.answer}`,
+        correction: result.corrections.join(" "),
+        example: currentPrompt.answer,
+      });
       addReviewItems([
         {
           area: "writing",
@@ -1808,33 +1807,139 @@ function ReviewCard({ item, mark }: { item: ReviewItem; mark: (id: string, maste
 
 function KnowledgeView({ state }: { state: AppState }) {
   const [filter, setFilter] = useState<"all" | SkillArea>("all");
-  const entries = filter === "all" ? state.knowledge : state.knowledge.filter((entry) => entry.area === filter);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    { role: "agent", text: "你好！我是英语学习助手 🎓 关于知识库里的错题，或者任何英语单词、语法、口语问题，都可以直接问我。" },
+  ]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatBoxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (chatBoxRef.current) chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight;
+  }, [chatMessages.length]);
+
+  // 只展示记录了错误的条目（过滤掉正确回答的内容）
+  const correctSignals = ["本题回答正确。", "已通过。", "拼词正确。"];
+  const errorEntries = useMemo(
+    () =>
+      state.knowledge.filter(
+        (entry) =>
+          entry.correction &&
+          entry.correction.trim().length > 0 &&
+          !correctSignals.includes(entry.correction),
+      ),
+    [state.knowledge],
+  );
+
+  const areaErrorCounts: Record<string, number> = {
+    vocabulary: errorEntries.filter((e) => e.area === "vocabulary").length,
+    speaking: errorEntries.filter((e) => e.area === "speaking").length,
+    writing: errorEntries.filter((e) => e.area === "writing").length,
+  };
+
+  const entries = filter === "all" ? errorEntries : errorEntries.filter((e) => e.area === filter);
+
+  const sendChat = async () => {
+    if (!chatInput.trim() || chatLoading) return;
+    const userMsg: ChatMessage = { role: "user", text: chatInput };
+    const nextMessages = [...chatMessages, userMsg];
+    setChatMessages(nextMessages);
+    setChatInput("");
+    setChatLoading(true);
+    try {
+      const reply = await requestAiReply(
+        nextMessages,
+        "你是专业的英语学习助手，帮助中国用户解答英语单词、语法、口语和写作方面的疑问。用中文解释，必要时用英文举例。回答要简洁实用。",
+      );
+      setChatMessages((prev) => [...prev, { role: "agent", text: reply }]);
+    } catch {
+      setChatMessages((prev) => [...prev, { role: "agent", text: "网络暂时不可用，请稍后再试。" }]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
   return (
-    <section className="panel">
-      <div className="section-title">
-        <h2>自动知识库</h2>
-        <span>{state.knowledge.length} 条记录</span>
-      </div>
-      <div className="segmented">
-        {(["all", "vocabulary", "speaking", "writing"] as const).map((item) => (
-          <button className={filter === item ? "active" : ""} onClick={() => setFilter(item)} key={item}>
-            {item === "all" ? "全部" : areaLabels[item]}
+    <div style={{ display: "grid", gap: 18 }}>
+      {/* 错题知识库 */}
+      <section className="panel">
+        <div className="section-title">
+          <h2>错题知识库</h2>
+          <span>{errorEntries.length} 条错误记录</span>
+        </div>
+        <p className="muted">根据词汇、口语、写作中的错误，由 AI 自动归纳的需要巩固的知识点。</p>
+        <div className="segmented">
+          {(["all", "vocabulary", "speaking", "writing"] as const).map((item) => (
+            <button key={item} className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>
+              {item === "all" ? "全部" : areaLabels[item]}
+              {item !== "all" && areaErrorCounts[item] > 0 && (
+                <span style={{ marginLeft: 5, fontSize: 11, background: "#cf5d3b", color: "#fff", borderRadius: 999, padding: "1px 6px", fontWeight: 700 }}>
+                  {areaErrorCounts[item]}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+        <div className="knowledge-list">
+          {entries.map((entry) => (
+            <article className="knowledge-entry" key={entry.id} style={{ borderLeft: "3px solid #cf5d3b" }}>
+              <span className="tag">{areaLabels[entry.area]}</span>
+              <h3>{entry.title}</h3>
+              <p>{entry.content}</p>
+              {entry.correction && (
+                <p className="correction" style={{ marginTop: 8 }}>
+                  💡 {entry.correction}
+                </p>
+              )}
+              {entry.example && (
+                <p className="example" style={{ marginTop: 6 }}>
+                  ✅ {entry.example}
+                </p>
+              )}
+            </article>
+          ))}
+          {entries.length === 0 && (
+            <div className="empty">
+              {errorEntries.length === 0
+                ? "暂无错题记录。完成今日学习后，答错的内容会自动汇总在这里。"
+                : `${areaLabels[filter as SkillArea]}暂无错题记录，继续加油！`}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* AI 问答助手 */}
+      <section className="panel">
+        <div className="section-title">
+          <h2>💬 AI 学习助手</h2>
+          <span>随时解答英语疑问</span>
+        </div>
+        <div className="chat-box" ref={chatBoxRef} style={{ height: 280 }}>
+          {chatMessages.map((msg, idx) => (
+            <div key={idx} className={`bubble ${msg.role}`}>
+              {msg.text}
+            </div>
+          ))}
+          {chatLoading && (
+            <div className="bubble agent" style={{ fontStyle: "italic", color: "#667461" }}>
+              AI 正在思考...
+            </div>
+          )}
+        </div>
+        <div className="input-row" style={{ marginTop: 10 }}>
+          <input
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
+            placeholder="问我任何英语问题..."
+            style={{ fontSize: 16 }}
+          />
+          <button className="icon primary" onClick={sendChat} disabled={!chatInput.trim() || chatLoading} title="发送">
+            <Send size={18} />
           </button>
-        ))}
-      </div>
-      <div className="knowledge-list">
-        {entries.map((entry) => (
-          <article className="knowledge-entry" key={entry.id}>
-            <span className="tag">{areaLabels[entry.area]}</span>
-            <h3>{entry.title}</h3>
-            <p>{entry.content}</p>
-            {entry.correction && <p className="correction">{entry.correction}</p>}
-            {entry.example && <p className="example">{entry.example}</p>}
-          </article>
-        ))}
-        {entries.length === 0 && <div className="empty">完成练习后，这里会自动沉淀你的词汇、错句和语法点。</div>}
-      </div>
-    </section>
+        </div>
+      </section>
+    </div>
   );
 }
 
