@@ -93,6 +93,42 @@ export const defaultState = (): AppState => ({
   streakDays: 0,
 });
 
+/**
+ * 如果存储的进度是上一天（或更早）且上一次已全部完成，则重置今日进度，开始新一天。
+ * 如果上一次未完成，则保留进度（允许用户跨天继续）。
+ */
+const applyDayResetIfNeeded = (state: AppState): AppState => {
+  const today = todayKey();
+  const progressDate = state.progress.today.date;
+  const vocCompleted = state.progress.today.vocabulary.completed;
+  const speakCompleted = state.progress.today.speaking.completed;
+  const writeCompleted = state.progress.today.writing.completed;
+
+  if (progressDate !== today && vocCompleted && speakCompleted && writeCompleted) {
+    // 新的一天且昨天已完成 → 重置今日进度
+    const theme = getDefaultTheme();
+    return {
+      ...state,
+      progress: {
+        ...state.progress,
+        today: {
+          date: today,
+          themeId: theme.id,
+          vocabulary: { index: 0, selected: "", feedback: "", answered: false, completed: false },
+          speaking: {
+            messages: [{ role: "agent" as const, text: theme.speaking.opener }],
+            input: "",
+            feedback: "",
+            completed: false,
+          },
+          writing: { index: 0, answer: "", feedback: "", checked: false, completed: false },
+        },
+      },
+    };
+  }
+  return state;
+};
+
 export const loadState = (): AppState => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -104,7 +140,7 @@ export const loadState = (): AppState => {
     const parsedSpeaking = parsedToday.speaking ?? {};
     const parsedWriting = parsedToday.writing ?? {};
 
-    return {
+    const loaded: AppState = {
       ...defaults,
       diagnosis: { ...defaults.diagnosis, ...parsed.diagnosis },
       reviewItems: Array.isArray(parsed.reviewItems) ? parsed.reviewItems : defaults.reviewItems,
@@ -135,6 +171,8 @@ export const loadState = (): AppState => {
       streakDays: Number(parsed.streakDays ?? defaults.streakDays),
       lastStudyDate: parsed.lastStudyDate,
     };
+    // 在读取时就应用新的一天重置，避免 React 层面的竞态条件
+    return applyDayResetIfNeeded(loaded);
   } catch {
     return defaultState();
   }
@@ -212,7 +250,7 @@ export const loadStateFromCloud = async (): Promise<AppState | null> => {
     const parsedVocabulary = (parsedToday as Record<string, unknown>).vocabulary ?? {};
     const parsedSpeaking = (parsedToday as Record<string, unknown>).speaking ?? {};
     const parsedWriting = (parsedToday as Record<string, unknown>).writing ?? {};
-    return {
+    const cloudLoaded = {
       ...defaults,
       ...raw,
       diagnosis: { ...defaults.diagnosis, ...(raw.diagnosis as object) },
@@ -244,6 +282,7 @@ export const loadStateFromCloud = async (): Promise<AppState | null> => {
       streakDays: Number((raw.streakDays as number | undefined) ?? defaults.streakDays),
       lastStudyDate: raw.lastStudyDate as string | undefined,
     } as AppState;
+    return applyDayResetIfNeeded(cloudLoaded);
   } catch {
     return null;
   }

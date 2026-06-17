@@ -98,36 +98,16 @@ export function App() {
   }>({ email: null, name: null, authenticated: false });
 
   // 启动时：加载用户信息 + 从云端同步最新状态（云端为权威数据源）
+  // 注意：loadStateFromCloud() 内部已应用新的一天重置逻辑，无需在此重复处理
   useEffect(() => {
     let cancelled = false;
     Promise.all([getCurrentUser(), loadStateFromCloud()]).then(([user, cloudState]) => {
       if (cancelled) return;
       setCurrentUser(user);
       if (cloudState) {
-        // 应用与 TodayView 相同的日期重置逻辑：
-        // 如果云端记录的是昨天（或更早）且昨天已全部完成，则重置今日进度，开始新一天
-        const todayKey = getTodayKey();
-        const cloudTodayDate = cloudState.progress.today.date;
-        const cloudAllCompleted =
-          cloudState.progress.today.vocabulary.completed &&
-          cloudState.progress.today.speaking.completed &&
-          cloudState.progress.today.writing.completed;
-
-        let finalState = cloudState;
-        if (cloudTodayDate !== todayKey && cloudAllCompleted) {
-          // 新的一天且前一天已完成 → 重置今日进度
-          const theme = getTodayTheme();
-          finalState = {
-            ...cloudState,
-            progress: {
-              ...cloudState.progress,
-              today: resetTodayProgressForTheme(theme),
-            },
-          };
-        }
-
-        setState(finalState);
-        saveState(finalState);
+        // 云端数据已在 loadStateFromCloud 内部做了日期重置处理，直接应用
+        setState(cloudState);
+        saveState(cloudState);
       }
     });
     return () => { cancelled = true; };
@@ -291,8 +271,11 @@ function TodayView({
   const speakingUnlocked = todayProgress.vocabulary.completed;
   const writingUnlocked = todayProgress.speaking.completed;
   const reviewUnlocked = todayProgress.writing.completed;
-  // 用户点击"我完成了今天的学习"并生成报告后，lastStudyDate === today，集中复习总结标记为已完成
-  const reviewCompleted = state.lastStudyDate === getTodayKey();
+  // 只有当：1) 报告是今天生成的 且 2) 今日进度记录的日期也是今天，才视为"今日已完成"
+  // 双重检查防止跨天时旧状态误触发完成视图
+  const reviewCompleted =
+    state.lastStudyDate === getTodayKey() &&
+    todayProgress.date === getTodayKey();
   const pathStatuses: PathStatus[] = [
     todayProgress.vocabulary.completed ? "completed" : "current",
     todayProgress.vocabulary.completed ? (todayProgress.speaking.completed ? "completed" : "current") : "locked",
