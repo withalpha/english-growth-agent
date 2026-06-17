@@ -68,17 +68,20 @@ export interface TodayProgress {
     selected: string;
     feedback: string;
     answered: boolean;
+    completed: boolean;
   };
   speaking: {
     messages: ChatMessage[];
     input: string;
     feedback: string;
+    completed: boolean;
   };
   writing: {
     index: number;
     answer: string;
     feedback: string;
     checked: boolean;
+    completed: boolean;
   };
 }
 

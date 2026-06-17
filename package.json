@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc && vite build",
+    "build": "tsc && node scripts/build-vite.mjs",
     "build:single": "npm.cmd run build && node scripts/build-single.mjs",
     "preview": "vite preview --host 127.0.0.1"
   },

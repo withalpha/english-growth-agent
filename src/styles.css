@@ -294,6 +294,23 @@ nav button:hover {
   overflow: hidden;
 }
 
+.path-node.completed {
+  border-color: #b8dcb7;
+  background: #eef8ec;
+}
+
+.path-node.current {
+  border-color: #73a66f;
+  background: #f7fbf4;
+  box-shadow: 0 10px 26px rgba(47, 138, 67, 0.12);
+}
+
+.path-node.locked {
+  border-style: dashed;
+  background: #f2f4f1;
+  opacity: 0.85;
+}
+
 .path-node:after {
   content: "";
   position: absolute;
@@ -312,6 +329,37 @@ nav button:hover {
   background: #67c85d;
   border: 6px solid #e9f4e7;
   margin-bottom: 10px;
+}
+
+.path-node.current .node-dot {
+  background: #2f8a43;
+}
+
+.path-node.locked .node-dot {
+  background: #c9d3c5;
+  border-color: #e7ece4;
+}
+
+.node-status {
+  display: inline-flex;
+  margin-bottom: 10px;
+  font-style: normal;
+  font-size: 12px;
+  line-height: 1;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #e9f4e7;
+  color: #255f32;
+}
+
+.path-node.current .node-status {
+  background: #dff1db;
+  color: #1f5e2e;
+}
+
+.path-node.locked .node-status {
+  background: #e7ebe5;
+  color: #6c7767;
 }
 
 .path-node strong,
