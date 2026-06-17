@@ -1194,7 +1194,8 @@ function WritingPractice({
     const feedback = correct
       ? `✅ 很好！${result.summary}${result.corrections.length ? " " + result.corrections.join(" ") : ""}`
       : `❌ 需要调整。${result.summary} ${result.corrections.join(" ")}`;
-    updateProgress({ ...progress, checked: correct, feedback });
+    // 无论 AI 评分高低，都解锁"下一句"按钮，让用户可以继续学习
+    updateProgress({ ...progress, checked: true, feedback });
     addKnowledge({
       area: "writing",
       title: lesson.grammar,
