@@ -5,3 +5,8 @@ pages_build_output_dir = "dist"
 [vars]
 OPENAI_BASE_URL = "https://yunwu.ai/v1"
 OPENAI_MODEL = "gpt-5.4-mini"
+
+[[kv_namespaces]]
+binding = "USER_STATE_KV"
+id = "0bd066125147467093930f1a8caf15c9"
+preview_id = "fb67da3449724549a1a8726c2404e59a"

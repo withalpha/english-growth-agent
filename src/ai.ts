@@ -147,3 +147,19 @@ export async function generateDailyReport(state: AppState): Promise<Omit<DailyRe
 
   return fallback;
 }
+
+export async function requestTts(word: string): Promise<HTMLAudioElement | null> {
+  try {
+    const response = await fetch("/api/ai/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ word }),
+    });
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    return new Audio(url);
+  } catch {
+    return null;
+  }
+}

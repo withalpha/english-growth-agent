@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
   CheckCircle2,
@@ -10,10 +10,11 @@ import {
   Send,
   Sparkles,
   Target,
+  Volume2,
 } from "lucide-react";
 import { areaLabels, dailyThemes, vocabularyCards } from "./data";
-import { generateDailyReport, requestAiFeedback, requestAiReply } from "./ai";
-import { getTodayKey, loadState, makeDailyReport, makeKnowledgeEntry, makeReviewItem, saveState } from "./storage";
+import { generateDailyReport, requestAiFeedback, requestAiReply, requestTts } from "./ai";
+import { getCurrentUser, getTodayKey, loadState, loadStateFromCloud, makeDailyReport, makeKnowledgeEntry, makeReviewItem, saveState, saveStateToCloud } from "./storage";
 import type { AppState, ChatMessage, ReviewItem, SkillArea } from "./types";
 
 type Tab = "today" | "diagnosis" | "review" | "knowledge" | "reports";
@@ -31,6 +32,32 @@ const normalize = (text: string) =>
 
 const hasOnlyChineseEnglish = (text: string) =>
   /^[\u4e00-\u9fa5a-zA-Z0-9\s.,!?'"():;\-\/]*$/.test(text);
+
+// 用主题ID作为种子确定性地选择3道"拼词"题（剩余2道为"写作"题）
+const seededShuffle = (arr: number[], seed: number): number[] => {
+  const result = [...arr];
+  let s = Math.abs(seed);
+  for (let i = result.length - 1; i > 0; i--) {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    const j = s % (i + 1);
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+};
+
+const getArrangeIndices = (themeId: string): Set<number> => {
+  const seed = themeId.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  return new Set(seededShuffle([0, 1, 2, 3, 4], seed).slice(0, 3));
+};
+
+const shuffleArray = <T,>(arr: T[]): T[] => {
+  const result = [...arr];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+};
 
 const DAILY_VOCABULARY_TARGET = 20;
 const DAILY_SPEAKING_TARGET = 5;
@@ -64,8 +91,33 @@ const diagnosisSpeakingPrompts = [
 export function App() {
   const [state, setState] = useState<AppState>(() => loadState());
   const [activeTab, setActiveTab] = useState<Tab>("today");
+  const [currentUser, setCurrentUser] = useState<{
+    email: string | null;
+    name: string | null;
+    authenticated: boolean;
+  }>({ email: null, name: null, authenticated: false });
 
-  useEffect(() => saveState(state), [state]);
+  // 启动时：加载用户信息 + 从云端同步最新状态（云端为权威数据源）
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([getCurrentUser(), loadStateFromCloud()]).then(([user, cloudState]) => {
+      if (cancelled) return;
+      setCurrentUser(user);
+      if (cloudState) {
+        // 云端有数据：以云端为准并更新本地缓存
+        setState(cloudState);
+        saveState(cloudState);
+      }
+    });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 每次状态变化：同步到 localStorage + 云端（云端有 1.5 秒防抖）
+  useEffect(() => {
+    saveState(state);
+    saveStateToCloud(state);
+  }, [state]);
 
   const updateState = (next: AppState | ((current: AppState) => AppState)) => {
     setState((current) => (typeof next === "function" ? next(current) : next));
@@ -129,6 +181,14 @@ export function App() {
             <FileText size={18} /> 我的报告
           </button>
         </nav>
+        {currentUser.authenticated && (
+          <div style={{ padding: "10px 16px", borderRadius: 8, background: "#1a2e1e", border: "1px solid #3a4e3c" }}>
+            <span style={{ color: "#b8c8b6", fontSize: 12, display: "block" }}>当前用户</span>
+            <strong style={{ display: "block", fontSize: 13, marginTop: 4, color: "#e8f0e5", wordBreak: "break-all" }}>
+              {currentUser.email}
+            </strong>
+          </div>
+        )}
         <div className="side-stat">
           <span>连续学习</span>
           <strong>{state.streakDays} 天</strong>
@@ -189,10 +249,16 @@ function TodayView({
 }) {
   const [reporting, setReporting] = useState(false);
   const theme = getTodayTheme();
+  // 上一次全部完成且日期变了才重置，否则继续昨天的进度
+  const prevAllCompleted =
+    state.progress.today.vocabulary.completed &&
+    state.progress.today.speaking.completed &&
+    state.progress.today.writing.completed;
+  const dateChanged = state.progress.today.date !== getTodayKey();
   const todayProgress =
-    state.progress.today.date === getTodayKey() && state.progress.today.themeId === theme.id
-      ? state.progress.today
-      : resetTodayProgressForTheme(theme);
+    dateChanged && prevAllCompleted
+      ? resetTodayProgressForTheme(theme)
+      : state.progress.today;
   const speakingUnlocked = todayProgress.vocabulary.completed;
   const writingUnlocked = todayProgress.speaking.completed;
   const reviewUnlocked = todayProgress.writing.completed;
@@ -203,11 +269,25 @@ function TodayView({
     reviewUnlocked ? "current" : "locked",
   ];
 
+  // 只有上一次学习「全部完成」（词汇+口语+写作均 completed）且日期已变，才开始新一天。
+  // 未完成的情况下即使日期变了，也继续昨天的进度，不重置。
   useEffect(() => {
-    if (state.progress.today.date !== getTodayKey() || state.progress.today.themeId !== theme.id) {
+    const prevAllCompleted =
+      state.progress.today.vocabulary.completed &&
+      state.progress.today.speaking.completed &&
+      state.progress.today.writing.completed;
+    const dateChanged = state.progress.today.date !== getTodayKey();
+    if (dateChanged && prevAllCompleted) {
       updateProgress((progress) => ({ ...progress, today: resetTodayProgressForTheme(theme) }));
     }
-  }, [state.progress.today.date, state.progress.today.themeId, theme, updateProgress]);
+  }, [
+    state.progress.today.date,
+    state.progress.today.vocabulary.completed,
+    state.progress.today.speaking.completed,
+    state.progress.today.writing.completed,
+    theme,
+    updateProgress,
+  ]);
 
   const handleComplete = async () => {
     setReporting(true);
@@ -244,14 +324,17 @@ function TodayView({
           ))}
         </div>
       </section>
-      <VocabularyPractice
-        theme={theme}
-        progress={todayProgress.vocabulary}
-        updateProgress={(next) => updateProgress((current) => ({ ...current, today: { ...todayProgress, vocabulary: next } }))}
-        addReviewItems={addReviewItems}
-        addKnowledge={addKnowledge}
-      />
-      {speakingUnlocked && (
+      {/* 每次只显示当前激活的单个模块 */}
+      {!todayProgress.vocabulary.completed && (
+        <VocabularyPractice
+          theme={theme}
+          progress={todayProgress.vocabulary}
+          updateProgress={(next) => updateProgress((current) => ({ ...current, today: { ...todayProgress, vocabulary: next } }))}
+          addReviewItems={addReviewItems}
+          addKnowledge={addKnowledge}
+        />
+      )}
+      {todayProgress.vocabulary.completed && !todayProgress.speaking.completed && (
         <SpeakingPractice
           theme={theme}
           progress={todayProgress.speaking}
@@ -260,7 +343,7 @@ function TodayView({
           addKnowledge={addKnowledge}
         />
       )}
-      {writingUnlocked && (
+      {todayProgress.speaking.completed && !todayProgress.writing.completed && (
         <WritingPractice
           theme={theme}
           progress={todayProgress.writing}
@@ -269,7 +352,7 @@ function TodayView({
           addKnowledge={addKnowledge}
         />
       )}
-      {reviewUnlocked && (
+      {todayProgress.writing.completed && (
         <section className="panel wide">
           <div className="section-title">
             <h2>完成今日学习</h2>
@@ -524,6 +607,9 @@ function VocabularyPractice({
   const learnedCount = Math.min(progress.index + 1, DAILY_VOCABULARY_TARGET);
   const correctAnswer = questionType === "en-to-cn" ? card.meaning : card.word;
   const canUnlockSpeaking = progress.index >= DAILY_VOCABULARY_TARGET - 1 && progress.answered;
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
   const options = useMemo(() => {
     const pool = cards
       .filter((item) => item.word !== card.word)
@@ -532,6 +618,95 @@ function VocabularyPractice({
     const wrong = pool.slice(0, 3).map((item) => (questionType === "en-to-cn" ? item.meaning : item.word));
     return [correctAnswer, ...wrong].sort((a, b) => a.localeCompare(b));
   }, [card.meaning, card.word, cards, correctAnswer, progress.index, questionType]);
+
+  // Auto-load and play TTS when card changes
+  useEffect(() => {
+    let cancelled = false;
+    const prev = audioRef.current;
+    if (prev) {
+      prev.pause();
+      if (prev.src.startsWith("blob:")) URL.revokeObjectURL(prev.src);
+      audioRef.current = null;
+    }
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    setIsSpeaking(false);
+
+    requestTts(card.word).then((audio) => {
+      if (cancelled) return;
+      if (audio) {
+        audioRef.current = audio;
+        setIsSpeaking(true);
+        audio.addEventListener("ended", () => setIsSpeaking(false), { once: true });
+        audio.addEventListener("error", () => setIsSpeaking(false), { once: true });
+        audio.play().catch(() => {
+          // Autoplay blocked — user can still click the speaker button
+          setIsSpeaking(false);
+        });
+      } else if (!cancelled && window.speechSynthesis) {
+        // Fallback: Web Speech API for local file usage
+        const utterance = new SpeechSynthesisUtterance(card.word);
+        utterance.lang = "en-US";
+        utterance.rate = 0.85;
+        setIsSpeaking(true);
+        utterance.onend = () => setIsSpeaking(false);
+        utterance.onerror = () => setIsSpeaking(false);
+        window.speechSynthesis.speak(utterance);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      const current = audioRef.current;
+      if (current) {
+        current.pause();
+        if (current.src.startsWith("blob:")) URL.revokeObjectURL(current.src);
+        audioRef.current = null;
+      }
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
+    };
+  }, [card.word]);
+
+  // Speak word via TTS API or fall back to Web Speech API
+  const speakWord = async (word: string): Promise<boolean> => {
+    // Try existing loaded audio first
+    if (audioRef.current) {
+      const audio = audioRef.current;
+      setIsSpeaking(true);
+      audio.addEventListener("ended", () => setIsSpeaking(false), { once: true });
+      audio.addEventListener("error", () => setIsSpeaking(false), { once: true });
+      audio.currentTime = 0;
+      await audio.play().catch(() => setIsSpeaking(false));
+      return true;
+    }
+    // Try TTS API
+    const audio = await requestTts(word);
+    if (audio) {
+      audioRef.current = audio;
+      setIsSpeaking(true);
+      audio.addEventListener("ended", () => setIsSpeaking(false), { once: true });
+      audio.addEventListener("error", () => setIsSpeaking(false), { once: true });
+      await audio.play().catch(() => setIsSpeaking(false));
+      return true;
+    }
+    // Fallback: Web Speech API (works locally)
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(word);
+      utterance.lang = "en-US";
+      utterance.rate = 0.85;
+      setIsSpeaking(true);
+      utterance.onend = () => setIsSpeaking(false);
+      utterance.onerror = () => setIsSpeaking(false);
+      window.speechSynthesis.speak(utterance);
+      return true;
+    }
+    return false;
+  };
+
+  const playWord = async () => {
+    if (isSpeaking) return;
+    await speakWord(card.word);
+  };
 
   const choose = async (option: string) => {
     if (progress.answered) return;
@@ -576,41 +751,98 @@ function VocabularyPractice({
     updateProgress({ ...progress, selected: "", feedback: "", answered: false });
   };
 
+  const progressPct = (learnedCount / DAILY_VOCABULARY_TARGET) * 100;
+  const isCorrect = progress.answered && progress.selected === correctAnswer;
+
   return (
-    <section className="panel">
-      <div className="section-title">
+    <section className="panel" style={{ overflow: "hidden" }}>
+      {/* Duolingo-style orange progress bar */}
+      <div className="vocab-progress-bar">
+        <div className="vocab-progress-fill" style={{ width: `${progressPct}%` }} />
+      </div>
+
+      <div className="section-title" style={{ marginTop: 14 }}>
         <h2>词汇互动</h2>
         <span>
           {theme.domain}主题 {learnedCount}/{DAILY_VOCABULARY_TARGET} 题
         </span>
       </div>
-      <div className="word-card">
-        <strong>{questionType === "en-to-cn" ? card.word : card.meaning}</strong>
-        <span>{questionType === "en-to-cn" ? "请选择对应的中文意思" : "请选择对应的英文单词"}</span>
+
+      {/* Stacked word card */}
+      <div className="vocab-card-stack">
+        <div className="vocab-card-inner">
+          <p className="vocab-question-hint">
+            {questionType === "en-to-cn" ? "这个英文单词是什么意思？" : "哪个英文单词对应这个中文？"}
+          </p>
+          <div className="vocab-word-row">
+            <span className="vocab-word-text">
+              {questionType === "en-to-cn" ? card.word : card.meaning}
+            </span>
+            <button
+              className={`vocab-speaker-btn${isSpeaking ? " speaking" : ""}`}
+              onClick={playWord}
+              title="朗读单词"
+            >
+              <Volume2 size={20} />
+            </button>
+          </div>
+        </div>
       </div>
-      <div className="choice-grid">
-        {options.map((option) => (
-          <button
-            className={progress.answered && option === correctAnswer ? "choice correct" : progress.answered && option === progress.selected ? "choice wrong" : "choice"}
-            onClick={() => choose(option)}
-            key={option}
-          >
-            {option}
-          </button>
-        ))}
+
+      {/* Full-width staggered options */}
+      <div className="vocab-options">
+        {options.map((option, idx) => {
+          let cls = "vocab-option";
+          if (progress.answered) {
+            if (option === correctAnswer) cls += " show-correct";
+            else if (option === progress.selected) cls += " wrong";
+          }
+          return (
+            <button
+              key={option}
+              className={cls}
+              style={{ animationDelay: `${idx * 70}ms` }}
+              onClick={() => choose(option)}
+              disabled={progress.answered}
+            >
+              {option}
+            </button>
+          );
+        })}
       </div>
-      <div className="actions">
-        <button className="primary" onClick={nextQuestion} disabled={!progress.answered || progress.index >= DAILY_VOCABULARY_TARGET - 1}>
-          <CheckCircle2 size={18} /> 下一题
-        </button>
-        {canUnlockSpeaking && !progress.completed && (
-          <button className="primary" onClick={() => updateProgress({ ...progress, completed: true })}>
-            <CheckCircle2 size={18} /> 进入口语陪练
-          </button>
-        )}
-        {progress.completed && <span className="pill">词汇互动已完成</span>}
-      </div>
-      {progress.feedback && <p className="feedback">{progress.feedback}</p>}
+
+      {/* Result bar – slides in after answering */}
+      {progress.answered && (
+        <div className={`vocab-result-bar ${isCorrect ? "correct-bar" : "wrong-bar"}`}>
+          <div className="vocab-result-content">
+            <span className="vocab-result-icon">{isCorrect ? "✅" : "❌"}</span>
+            <div>
+              <strong>{isCorrect ? "太棒了！" : "再接再厉！"}</strong>
+              {progress.feedback && <p className="vocab-result-detail">{progress.feedback}</p>}
+            </div>
+          </div>
+          <div className="vocab-result-actions">
+            {!canUnlockSpeaking && (
+              <button
+                className="primary vocab-continue-btn"
+                onClick={nextQuestion}
+                disabled={progress.index >= DAILY_VOCABULARY_TARGET - 1}
+              >
+                继续
+              </button>
+            )}
+            {canUnlockSpeaking && !progress.completed && (
+              <button
+                className="primary vocab-continue-btn"
+                onClick={() => updateProgress({ ...progress, completed: true })}
+              >
+                <CheckCircle2 size={18} /> 进入口语陪练
+              </button>
+            )}
+            {progress.completed && <span className="pill">词汇互动已完成</span>}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -630,8 +862,44 @@ function SpeakingPractice({
 }) {
   const scenario = theme.speaking;
   const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<InstanceType<SpeechRecognitionConstructor> | null>(null);
+  const [interimText, setInterimText] = useState("");
   const userTurns = progress.messages.filter((message) => message.role === "user").length;
   const canUnlockWriting = userTurns >= DAILY_SPEAKING_TARGET && Boolean(progress.feedback.trim());
+
+  // ── TTS helpers ──
+  const speakText = (text: string) => {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-US";
+    utterance.rate = 0.9;
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const chatBoxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (chatBoxRef.current) {
+      chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight;
+    }
+  }, [progress.messages.length]);
+
+  const agentMessages = progress.messages.filter((m) => m.role === "agent");
+  const agentMsgCountRef = useRef(agentMessages.length);
+  useEffect(() => {
+    if (agentMessages.length > 0 && agentMessages.length !== agentMsgCountRef.current) {
+      agentMsgCountRef.current = agentMessages.length;
+      speakText(agentMessages[agentMessages.length - 1].text);
+    }
+  }, [progress.messages.length]);
+
+  // 首次进入时朗读 opener
+  useEffect(() => {
+    if (agentMessages.length === 1) {
+      speakText(agentMessages[0].text);
+      agentMsgCountRef.current = 1;
+    }
+  }, []);
 
   const resetScenario = () => {
     updateProgress({ ...progress, messages: [{ role: "agent", text: scenario.opener }], input: "", feedback: "" });
@@ -678,19 +946,64 @@ function SpeakingPractice({
   };
 
   const startSpeech = () => {
+    // 如果正在录音，点击麦克风则停止
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+      setListening(false);
+      setInterimText("");
+      return;
+    }
+
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       updateProgress({ ...progress, feedback: "当前浏览器不支持语音识别，请使用文字输入。" });
       return;
     }
+
     const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
     recognition.lang = "en-US";
-    recognition.interimResults = false;
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.maxAlternatives = 1;
+
     recognition.onstart = () => setListening(true);
-    recognition.onend = () => setListening(false);
-    recognition.onresult = (event) => {
-      updateProgress({ ...progress, input: event.results[0][0].transcript });
+
+    recognition.onend = () => {
+      recognitionRef.current = null;
+      setListening(false);
+      setInterimText("");
     };
+
+    recognition.onresult = (event) => {
+      let finalTranscript = "";
+      let interimTranscript = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) {
+          finalTranscript += result[0].transcript;
+        } else {
+          interimTranscript += result[0].transcript;
+        }
+      }
+      if (finalTranscript) {
+        // 有最终结果：更新 progress.input，清除 interim，停止录音
+        updateProgress({ ...progress, input: finalTranscript });
+        setInterimText("");
+        recognition.stop();
+      } else {
+        // 仅显示实时转录，不更新 state（避免 stale closure）
+        setInterimText(interimTranscript);
+      }
+    };
+
+    recognition.onerror = () => {
+      recognitionRef.current = null;
+      setListening(false);
+      setInterimText("");
+    };
+
     recognition.start();
   };
 
@@ -707,10 +1020,23 @@ function SpeakingPractice({
         <p>{scenario.goal}</p>
         <p>Agent 会引导你练习，单个话题最多 5 句，然后给你评价和巩固建议。</p>
       </div>
-      <div className="chat-box">
+      <div className="chat-box" ref={chatBoxRef}>
         {progress.messages.map((message, idx) => (
           <div className={`bubble ${message.role}`} key={`${message.role}-${idx}`}>
-            {message.text}
+            {message.role === "agent" ? (
+              <span className="bubble-agent-content">
+                <span className="bubble-agent-text">{message.text}</span>
+                <button
+                  className="bubble-speaker-btn"
+                  onClick={() => speakText(message.text)}
+                  title="朗读"
+                >
+                  <Volume2 size={14} />
+                </button>
+              </span>
+            ) : (
+              message.text
+            )}
           </div>
         ))}
       </div>
@@ -718,7 +1044,15 @@ function SpeakingPractice({
         <button className={listening ? "active icon" : "icon"} onClick={startSpeech} title="语音输入">
           <Mic size={18} />
         </button>
-        <input value={progress.input} onChange={(event) => updateProgress({ ...progress, input: event.target.value })} placeholder="Type or speak in English..." />
+        <input
+          value={interimText || progress.input}
+          onChange={(event) => {
+            setInterimText("");
+            updateProgress({ ...progress, input: event.target.value });
+          }}
+          placeholder="Type or speak in English..."
+          style={{ fontSize: 16 }}
+        />
         <button className="icon primary" onClick={send} title="发送">
           <Send size={18} />
         </button>
@@ -753,37 +1087,128 @@ function WritingPractice({
   addKnowledge: (entry: Parameters<typeof makeKnowledgeEntry>[0]) => void;
 }) {
   const lesson = theme.writingLesson;
-  const prompt = lesson.prompts[progress.index % lesson.prompts.length];
   const practicedCount = Math.min(progress.index + 1, DAILY_WRITING_TARGET);
   const canFinishWriting = progress.index >= DAILY_WRITING_TARGET - 1 && progress.checked;
+  const currentPrompt = lesson.prompts[progress.index % lesson.prompts.length];
 
-  const check = async () => {
-    if (!hasOnlyChineseEnglish(progress.answer)) {
-      updateProgress({ ...progress, feedback: "请只使用中文或英语继续。" });
-      return;
+  // 3道拼词题 + 2道写作题（由主题ID确定性决定）
+  const arrangeIndices = useMemo(() => getArrangeIndices(theme.id), [theme.id]);
+  const isArrangeMode = arrangeIndices.has(progress.index);
+
+  // 去掉标点后的单词数组（用于拼词）
+  const answerTokens = useMemo(() => {
+    return currentPrompt.answer.replace(/[.!?,;:]/g, "").split(/\s+/).filter(Boolean);
+  }, [currentPrompt.answer]);
+
+  // 加上索引后缀避免重复词冲突："I|0", "want|1"
+  const indexedTokens = useMemo(
+    () => answerTokens.map((w, i) => `${w}|${i}`),
+    [answerTokens],
+  );
+
+  // 拼词模式本地状态
+  const [arrangeSelected, setArrangeSelected] = useState<string[]>([]);
+  const [arrangeAvailable, setArrangeAvailable] = useState<string[]>([]);
+  const [wrongAttempts, setWrongAttempts] = useState(0);
+  const [showHint, setShowHint] = useState(false);
+
+  // 切题时重置拼词状态
+  useEffect(() => {
+    if (isArrangeMode) {
+      setArrangeAvailable(shuffleArray([...indexedTokens]));
+      setArrangeSelected([]);
+      setWrongAttempts(0);
+      setShowHint(false);
     }
-    const expected = normalize(prompt.answer);
-    const actual = normalize(progress.answer);
-    const close = actual === expected || expected.split(" ").filter((word) => actual.includes(word)).length >= 4;
-    const result = await requestAiFeedback("writing", progress.answer, `正确参考：${prompt.answer}`);
-    const nextFeedback = close
-      ? `写得不错。${result.summary} 参考表达：${prompt.answer}`
-      : `别着急，参考写法是：${prompt.answer}。你可以重点看句子结构、词序和介词。${result.corrections.join(" ")}`;
-    updateProgress({ ...progress, checked: true, feedback: nextFeedback });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [progress.index]);
+
+  const speakText = (text: string) => {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-US";
+    utterance.rate = 0.9;
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const tokenLabel = (t: string) => t.split("|")[0];
+
+  // --- 拼词模式操作 ---
+  const selectToken = (token: string) => {
+    setArrangeAvailable((prev) => {
+      const idx = prev.indexOf(token);
+      if (idx === -1) return prev;
+      return [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+    });
+    setArrangeSelected((prev) => [...prev, token]);
+  };
+
+  const deselectToken = (token: string, pos: number) => {
+    setArrangeSelected((prev) => [...prev.slice(0, pos), ...prev.slice(pos + 1)]);
+    setArrangeAvailable((prev) => [...prev, token]);
+  };
+
+  const clearArrange = () => {
+    setArrangeAvailable((prev) => [...prev, ...arrangeSelected]);
+    setArrangeSelected([]);
+    updateProgress({ ...progress, feedback: "" });
+  };
+
+  const checkArrange = () => {
+    if (arrangeSelected.length === 0) return;
+    const assembled = arrangeSelected.map(tokenLabel).join(" ");
+    const expected = normalize(currentPrompt.answer.replace(/[.!?,;:]/g, ""));
+    const actual = normalize(assembled);
+
+    if (actual === expected) {
+      updateProgress({ ...progress, answer: assembled, feedback: currentPrompt.answer, checked: true });
+      speakText(currentPrompt.answer);
+      addKnowledge({
+        area: "writing",
+        title: lesson.grammar,
+        content: `中文：${currentPrompt.zh}\n正确答案：${currentPrompt.answer}`,
+        correction: "拼词正确。",
+        example: currentPrompt.answer,
+      });
+    } else {
+      const newWrong = wrongAttempts + 1;
+      setWrongAttempts(newWrong);
+      updateProgress({
+        ...progress,
+        feedback: `顺序还不对，再试试！${newWrong >= 2 ? '（可点「查看提示」）' : ''}`,
+      });
+    }
+  };
+
+  // --- 写作模式操作 ---
+  const checkWrite = async () => {
+    if (!progress.answer.trim()) return;
+    updateProgress({ ...progress, feedback: "AI 正在检查..." });
+    const result = await requestAiFeedback(
+      "writing",
+      progress.answer,
+      `中文原文：${currentPrompt.zh}\n参考译文：${currentPrompt.answer}\n请判断用户的英文答案意思是否与中文一致，语法是否正确。如果有错误，明确指出哪里错了以及如何修改。`,
+    );
+    const correct = result.score >= 70;
+    const feedback = correct
+      ? `✅ 很好！${result.summary}${result.corrections.length ? " " + result.corrections.join(" ") : ""}`
+      : `❌ 需要调整。${result.summary} ${result.corrections.join(" ")}`;
+    updateProgress({ ...progress, checked: correct, feedback });
     addKnowledge({
       area: "writing",
       title: lesson.grammar,
-      content: `中文：${prompt.zh}\n你的答案：${progress.answer}`,
-      correction: `参考：${prompt.answer}`,
-      example: prompt.answer,
+      content: `中文：${currentPrompt.zh}\n你的答案：${progress.answer}`,
+      correction: result.corrections.join(" ") || "已通过。",
+      example: currentPrompt.answer,
     });
-    if (!close) {
+    if (!correct) {
       addReviewItems([
         {
           area: "writing",
           title: lesson.grammar,
-          prompt: prompt.zh,
-          answer: prompt.answer,
+          prompt: currentPrompt.zh,
+          answer: currentPrompt.answer,
           note: lesson.tip,
           errorCount: 1,
           confidence: 2,
@@ -795,45 +1220,185 @@ function WritingPractice({
   const nextWritingQuestion = () => {
     if (progress.index < DAILY_WRITING_TARGET - 1) {
       updateProgress({ ...progress, index: progress.index + 1, answer: "", feedback: "", checked: false });
-      return;
+    } else {
+      updateProgress({ ...progress, answer: "", feedback: "", checked: false });
     }
-    updateProgress({ ...progress, answer: "", feedback: "", checked: false });
   };
 
+  const hintText =
+    wrongAttempts >= 1
+      ? `提示：前 ${Math.min(2, answerTokens.length)} 个词是「${answerTokens.slice(0, Math.min(2, answerTokens.length)).join(" ")}」`
+      : "";
+
   return (
-    <section className="panel">
-      <div className="section-title">
+    <section className="panel" style={{ overflow: "hidden" }}>
+      {/* 进度条 */}
+      <div className="vocab-progress-bar">
+        <div
+          className="vocab-progress-fill"
+          style={{
+            width: `${(practicedCount / DAILY_WRITING_TARGET) * 100}%`,
+            background: "linear-gradient(90deg,#58cc02,#2f8a43)",
+          }}
+        />
+      </div>
+
+      <div className="section-title" style={{ marginTop: 14 }}>
         <h2>写作练习</h2>
         <span>
-          今日 {practicedCount}/{DAILY_WRITING_TARGET} 句
+          今日 {practicedCount}/{DAILY_WRITING_TARGET} 句 · {isArrangeMode ? "🧩 拼词" : "✏️ 写作"}
         </span>
       </div>
-      <div className="tip-box">
+
+      {/* 语法提示 */}
+      <div className="tip-box" style={{ marginBottom: 16 }}>
         <strong>今日语法：{lesson.grammar}</strong>
         <p>{lesson.tip}</p>
-        {lesson.examples.map((example) => (
-          <p className="example" key={example}>
-            {example}
-          </p>
-        ))}
       </div>
-      <p className="muted">请翻译：{prompt.zh}</p>
-      <textarea value={progress.answer} onChange={(event) => updateProgress({ ...progress, answer: event.target.value })} placeholder="Write your English sentence..." />
-      <div className="actions">
-        <button onClick={nextWritingQuestion} disabled={!progress.checked || progress.index >= DAILY_WRITING_TARGET - 1}>
-          下一句
-        </button>
-        <button className="primary" onClick={check}>
-          <BookOpen size={18} /> 检查写作
-        </button>
-        {canFinishWriting && !progress.completed && (
-          <button className="primary" onClick={() => updateProgress({ ...progress, completed: true })}>
-            <CheckCircle2 size={18} /> 完成今日练习
-          </button>
-        )}
-        {progress.completed && <span className="pill">写作练习已完成</span>}
+
+      {/* 中文题目卡片 */}
+      <div className="writing-zh-card">
+        <span className="writing-zh-label">翻译成英文</span>
+        <p className="writing-zh-text">{currentPrompt.zh}</p>
       </div>
-      {progress.feedback && <p className="feedback">{progress.feedback}</p>}
+
+      {isArrangeMode ? (
+        <>
+          {/* 答案区域 */}
+          <div className="writing-answer-area">
+            {arrangeSelected.length === 0 && (
+              <span className="writing-answer-placeholder">点击下方单词，拼出这个句子 ↓</span>
+            )}
+            {arrangeSelected.map((token, idx) => (
+              <button
+                key={`sel-${token}-${idx}`}
+                className="writing-word-chip selected"
+                onClick={() => !progress.checked && deselectToken(token, idx)}
+                disabled={progress.checked}
+              >
+                {tokenLabel(token)}
+              </button>
+            ))}
+          </div>
+
+          <div className="writing-answer-divider" />
+
+          {/* 词库 */}
+          <div className="writing-word-bank">
+            {arrangeAvailable.map((token, idx) => (
+              <button
+                key={`avail-${token}-${idx}`}
+                className="writing-word-chip"
+                onClick={() => !progress.checked && selectToken(token)}
+                disabled={progress.checked}
+              >
+                {tokenLabel(token)}
+              </button>
+            ))}
+            {arrangeAvailable.length === 0 && !progress.checked && (
+              <span style={{ color: "#8fa98d", fontSize: 13 }}>所有单词已选，可以检查答案了</span>
+            )}
+          </div>
+
+          {/* 提示 */}
+          {wrongAttempts >= 1 && !progress.checked && (
+            <div className="writing-hint-box">
+              <button className="writing-hint-btn" onClick={() => setShowHint(!showHint)}>
+                {showHint ? "隐藏提示" : "💡 查看提示"}
+              </button>
+              {showHint && <p className="writing-hint-text">{hintText}</p>}
+            </div>
+          )}
+
+          {/* 错误反馈 */}
+          {progress.feedback && !progress.checked && (
+            <p className="feedback" style={{ borderLeftColor: "#cf5d3b", background: "#fff2ec" }}>
+              {progress.feedback}
+            </p>
+          )}
+
+          {/* 正确结果栏 */}
+          {progress.checked && (
+            <div className="vocab-result-bar correct-bar">
+              <div className="vocab-result-content">
+                <span className="vocab-result-icon">✅</span>
+                <div>
+                  <strong>太棒了！句子拼写正确！</strong>
+                  <p className="vocab-result-detail">{currentPrompt.answer}</p>
+                </div>
+              </div>
+              <div className="vocab-result-actions">
+                {!canFinishWriting && (
+                  <button className="primary vocab-continue-btn" onClick={nextWritingQuestion}>
+                    继续
+                  </button>
+                )}
+                {canFinishWriting && !progress.completed && (
+                  <button className="primary vocab-continue-btn" onClick={() => updateProgress({ ...progress, completed: true })}>
+                    <CheckCircle2 size={18} /> 完成今日练习
+                  </button>
+                )}
+                {progress.completed && <span className="pill">写作练习已完成</span>}
+              </div>
+            </div>
+          )}
+
+          {/* 操作按钮 */}
+          {!progress.checked && (
+            <div className="actions">
+              <button onClick={clearArrange} disabled={arrangeSelected.length === 0}>
+                清空重排
+              </button>
+              <button className="primary" onClick={checkArrange} disabled={arrangeSelected.length === 0}>
+                <CheckCircle2 size={18} /> 检查答案
+              </button>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          {/* 自由写作模式 */}
+          <textarea
+            value={progress.answer}
+            onChange={(event) =>
+              updateProgress({ ...progress, answer: event.target.value, checked: false })
+            }
+            placeholder="Write your English sentence here..."
+            style={{ fontSize: 16 }}
+          />
+
+          {progress.feedback && (
+            <p
+              className="feedback"
+              style={
+                progress.checked
+                  ? {}
+                  : { borderLeftColor: "#cf5d3b", background: "#fff2ec" }
+              }
+            >
+              {progress.feedback}
+            </p>
+          )}
+
+          <div className="actions">
+            <button
+              onClick={nextWritingQuestion}
+              disabled={!progress.checked || progress.index >= DAILY_WRITING_TARGET - 1}
+            >
+              下一句
+            </button>
+            <button className="primary" onClick={checkWrite} disabled={!progress.answer.trim()}>
+              <BookOpen size={18} /> AI 检查写作
+            </button>
+            {canFinishWriting && !progress.completed && (
+              <button className="primary" onClick={() => updateProgress({ ...progress, completed: true })}>
+                <CheckCircle2 size={18} /> 完成今日练习
+              </button>
+            )}
+            {progress.completed && <span className="pill">写作练习已完成</span>}
+          </div>
+        </>
+      )}
     </section>
   );
 }
@@ -1002,10 +1567,17 @@ declare global {
   type SpeechRecognitionConstructor = new () => {
     lang: string;
     interimResults: boolean;
+    continuous: boolean;
+    maxAlternatives: number;
     onstart: (() => void) | null;
     onend: (() => void) | null;
-    onresult: ((event: { results: { [index: number]: { [index: number]: { transcript: string } } } }) => void) | null;
+    onerror: (() => void) | null;
+    onresult: ((event: {
+      resultIndex: number;
+      results: { length: number; [index: number]: { isFinal: boolean; [index: number]: { transcript: string } } };
+    }) => void) | null;
     start: () => void;
+    stop: () => void;
   };
 
   interface Window {

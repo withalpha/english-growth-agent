@@ -170,3 +170,100 @@ export const makeDailyReport = (report: Omit<DailyReport, "id">): DailyReport =>
 });
 
 export const getTodayKey = todayKey;
+
+// ── 云端存储（Cloudflare KV，按用户隔离）──
+
+/** 防抖计时器，避免频繁写入 */
+let _cloudSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * 实时同步状态到云端（带 1.5 秒防抖）。
+ * 本地开发或用户未登录时静默失败，不影响使用。
+ */
+export const saveStateToCloud = (state: AppState): void => {
+  if (_cloudSaveTimer) clearTimeout(_cloudSaveTimer);
+  _cloudSaveTimer = setTimeout(async () => {
+    try {
+      await fetch("/api/user/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(state),
+      });
+    } catch {
+      // 云端不可达时静默失败，localStorage 是备份
+    }
+  }, 1500);
+};
+
+/**
+ * 从云端加载用户状态。
+ * 返回 null 表示云端无数据或未认证，调用方应降级到 localStorage。
+ */
+export const loadStateFromCloud = async (): Promise<AppState | null> => {
+  try {
+    const response = await fetch("/api/user/state");
+    if (!response.ok) return null;
+    const data: unknown = await response.json();
+    if (!data || typeof data !== "object") return null;
+    // 用 loadState 相同的 merge 逻辑来规范化云端数据
+    const raw = data as Record<string, unknown>;
+    const defaults = defaultState();
+    const parsedToday = (raw.progress as Record<string, unknown>)?.today ?? {};
+    const parsedVocabulary = (parsedToday as Record<string, unknown>).vocabulary ?? {};
+    const parsedSpeaking = (parsedToday as Record<string, unknown>).speaking ?? {};
+    const parsedWriting = (parsedToday as Record<string, unknown>).writing ?? {};
+    return {
+      ...defaults,
+      ...raw,
+      diagnosis: { ...defaults.diagnosis, ...(raw.diagnosis as object) },
+      reviewItems: Array.isArray(raw.reviewItems) ? (raw.reviewItems as ReviewItem[]) : defaults.reviewItems,
+      knowledge: Array.isArray(raw.knowledge) ? (raw.knowledge as KnowledgeEntry[]) : defaults.knowledge,
+      dailyReports: Array.isArray(raw.dailyReports) ? (raw.dailyReports as DailyReport[]) : defaults.dailyReports,
+      progress: {
+        diagnosis: { ...defaults.progress.diagnosis, ...((raw.progress as Record<string, unknown>)?.diagnosis as object) },
+        today: {
+          ...defaults.progress.today,
+          ...(parsedToday as object),
+          vocabulary: {
+            ...defaults.progress.today.vocabulary,
+            ...(parsedVocabulary as object),
+            completed: inferVocabularyCompleted(parsedVocabulary),
+          },
+          speaking: {
+            ...defaults.progress.today.speaking,
+            ...(parsedSpeaking as object),
+            completed: inferSpeakingCompleted(parsedSpeaking),
+          },
+          writing: {
+            ...defaults.progress.today.writing,
+            ...(parsedWriting as object),
+            completed: inferWritingCompleted(parsedWriting),
+          },
+        },
+      },
+      streakDays: Number((raw.streakDays as number | undefined) ?? defaults.streakDays),
+      lastStudyDate: raw.lastStudyDate as string | undefined,
+    } as AppState;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * 获取当前登录用户信息。
+ * 未登录或本地开发时返回 { email: null, name: null, authenticated: false }。
+ */
+export const getCurrentUser = async (): Promise<{
+  email: string | null;
+  name: string | null;
+  authenticated: boolean;
+}> => {
+  try {
+    const response = await fetch("/api/user/me");
+    if (!response.ok) return { email: null, name: null, authenticated: false };
+    const data = await response.json() as { email: string | null; name: string | null; authenticated: boolean };
+    return data;
+  } catch {
+    return { email: null, name: null, authenticated: false };
+  }
+};
