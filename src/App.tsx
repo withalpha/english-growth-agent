@@ -71,6 +71,21 @@ const todayPlan = [
   { title: "集中复习总结", target: "复习薄弱项", description: "复盘错词、错句和高频问题，继续滚动巩固" },
 ];
 
+/**
+ * 清除 Markdown 格式符号，避免 TTS 朗读出 ** * # ` 等符号。
+ * 保留实际文字内容，只移除格式标记。
+ */
+const stripMarkdown = (text: string): string =>
+  text
+    .replace(/\*\*(.*?)\*\*/g, "$1")   // **bold** → bold
+    .replace(/\*(.*?)\*/g, "$1")        // *italic* → italic
+    .replace(/__(.*?)__/g, "$1")        // __underline__ → underline
+    .replace(/_(.*?)_/g, "$1")          // _italic_ → italic
+    .replace(/`{1,3}(.*?)`{1,3}/g, "$1") // `code` → code
+    .replace(/^#{1,6}\s+/gm, "")        // ## headers → remove
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // [link](url) → link
+    .trim();
+
 /** 选取最接近 BBC RP 的英式语音（en-GB） */
 const getUkVoice = (): SpeechSynthesisVoice | null => {
   if (!window.speechSynthesis) return null;
@@ -89,14 +104,16 @@ const getUkVoice = (): SpeechSynthesisVoice | null => {
  * 适用于 AI 对话气泡、复习卡片、知识库等场景。
  */
 const speakBritish = async (text: string): Promise<void> => {
-  const audio = await requestTts(text);
+  const clean = stripMarkdown(text);
+  if (!clean) return;
+  const audio = await requestTts(clean);
   if (audio) {
     audio.play().catch(() => {});
     return;
   }
   if (!window.speechSynthesis) return;
   window.speechSynthesis.cancel();
-  const utt = new SpeechSynthesisUtterance(text);
+  const utt = new SpeechSynthesisUtterance(clean);
   utt.lang = "en-GB";
   utt.rate = 0.9;
   const ukVoice = getUkVoice();
@@ -110,12 +127,15 @@ const speakBritish = async (text: string): Promise<void> => {
  * 适用于 AI 诊断反馈、集中复习口语、知识库 AI 对话等混合中英文场景。
  */
 const speakMixed = async (text: string): Promise<void> => {
-  if (!text.trim()) return;
+  const text_ = stripMarkdown(text);
+  if (!text_.trim()) return;
+  // 用清理后的文本替换原变量，后续所有引用 text 的地方改用 text_
+  const cleanText = text_;
   if (window.speechSynthesis) window.speechSynthesis.cancel();
 
   // 按中文/英文边界分段
   const rawParts =
-    text.match(
+    cleanText.match(
       /[\u4e00-\u9fff\u3400-\u4dbf\uff00-\uffef\u3000-\u303f，。！？、：；""''（）【】…—·]+|[^\u4e00-\u9fff\u3400-\u4dbf\uff00-\uffef\u3000-\u303f，。！？、：；""''（）【】…—·]+/g,
     ) ?? [text];
 
@@ -1381,7 +1401,15 @@ function SpeakingPractice({
       .map((message) => message.text)
       .join("\n");
     const result = await requestAiFeedback("speaking", userText, scenario.goal);
-    updateProgress({ ...progress, messages: sourceMessages, input: "", feedback: `${result.score}分：${result.summary} ${result.corrections.join(" ")}` });
+    const cleanCorrections = result.corrections
+      .filter((c) => c && typeof c === "string" && !c.includes("[object"))
+      .join(" ");
+    updateProgress({
+      ...progress,
+      messages: sourceMessages,
+      input: "",
+      feedback: `${result.score}分：${result.summary}${cleanCorrections ? " " + cleanCorrections : ""}`,
+    });
     addReviewItems(result.reviewItems);
     // 只有口语有改进建议时才记录到知识库
     if (result.corrections.length > 0) {

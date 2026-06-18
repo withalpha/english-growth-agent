@@ -64,7 +64,18 @@ export async function requestAiFeedback(area: SkillArea, userInput: string, cont
       return {
         score: Number(data.score ?? fallbackByArea[area].score),
         summary: String(data.summary ?? fallbackByArea[area].summary),
-        corrections: Array.isArray(data.corrections) ? data.corrections.map(String) : fallbackByArea[area].corrections,
+        corrections: Array.isArray(data.corrections)
+        ? data.corrections.map((item: unknown) => {
+            if (typeof item === "string") return item;
+            if (item && typeof item === "object") {
+              const obj = item as Record<string, unknown>;
+              // 尝试从常见字段提取字符串
+              const val = obj.text ?? obj.correction ?? obj.note ?? obj.description ?? obj.message ?? Object.values(obj)[0];
+              return typeof val === "string" ? val : String(val ?? "");
+            }
+            return String(item ?? "");
+          }).filter((s: string) => s.trim().length > 0)
+        : fallbackByArea[area].corrections,
         reviewItems: Array.isArray(data.reviewItems) ? data.reviewItems : fallbackByArea[area].reviewItems,
       };
     }
