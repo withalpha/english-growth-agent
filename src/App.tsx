@@ -103,6 +103,77 @@ const speakBritish = async (text: string): Promise<void> => {
   window.speechSynthesis.speak(utt);
 };
 
+
+/**
+ * 智能混合语言朗读：中文段用普通话（zh-CN），英文段用 TTS fable + en-GB。
+ * 适用于 AI 诊断反馈、集中复习口语、知识库 AI 对话等混合中英文场景。
+ */
+const speakMixed = async (text: string): Promise<void> => {
+  if (!text.trim()) return;
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+
+  // 按中文/英文边界分段
+  const rawParts =
+    text.match(
+      /[\u4e00-\u9fff\u3400-\u4dbf\uff00-\uffef\u3000-\u303f，。！？、：；""''（）【】…—·]+|[^\u4e00-\u9fff\u3400-\u4dbf\uff00-\uffef\u3000-\u303f，。！？、：；""''（）【】…—·]+/g,
+    ) ?? [text];
+
+  // 合并相邻同语言段，减少切换次数
+  const segments: Array<{ lang: "zh" | "en"; text: string }> = [];
+  for (const part of rawParts) {
+    const t = part.trim();
+    if (!t) continue;
+    const lang = /[\u4e00-\u9fff]/.test(t) ? "zh" : "en";
+    if (segments.length > 0 && segments[segments.length - 1].lang === lang) {
+      segments[segments.length - 1].text += " " + t;
+    } else {
+      segments.push({ lang, text: t });
+    }
+  }
+
+  for (const seg of segments) {
+    if (seg.lang === "zh") {
+      // 中文段：Web Speech API，zh-CN 普通话
+      await new Promise<void>((resolve) => {
+        if (!window.speechSynthesis) { resolve(); return; }
+        const utt = new SpeechSynthesisUtterance(seg.text);
+        utt.lang = "zh-CN";
+        utt.rate = 0.9;
+        const voices = window.speechSynthesis.getVoices();
+        const zhVoice =
+          voices.find((v) => v.lang === "zh-CN" && v.name.toLowerCase().includes("google")) ??
+          voices.find((v) => v.lang === "zh-CN") ??
+          null;
+        if (zhVoice) utt.voice = zhVoice;
+        utt.onend = () => resolve();
+        utt.onerror = () => resolve();
+        window.speechSynthesis.speak(utt);
+      });
+    } else {
+      // 英文段：TTS API（fable/BBC RP），失败降级 en-GB
+      const audio = await requestTts(seg.text);
+      if (audio) {
+        await new Promise<void>((resolve) => {
+          audio.onended = () => resolve();
+          audio.onerror = () => resolve();
+          audio.play().catch(() => resolve());
+        });
+      } else if (window.speechSynthesis) {
+        await new Promise<void>((resolve) => {
+          const utt = new SpeechSynthesisUtterance(seg.text);
+          utt.lang = "en-GB";
+          utt.rate = 0.9;
+          const ukVoice = getUkVoice();
+          if (ukVoice) utt.voice = ukVoice;
+          utt.onend = () => resolve();
+          utt.onerror = () => resolve();
+          window.speechSynthesis.speak(utt);
+        });
+      }
+    }
+  }
+};
+
 const getDayIndex = () => Math.floor(new Date(getTodayKey()).getTime() / 86400000);
 
 const getTodayTheme = () => dailyThemes[getDayIndex() % dailyThemes.length];
@@ -1110,10 +1181,10 @@ function SpeakingPractice({
   const userTurns = progress.messages.filter((message) => message.role === "user").length;
   const canUnlockWriting = userTurns >= DAILY_SPEAKING_TARGET && Boolean(progress.feedback.trim());
 
-  // ── TTS helpers：优先 TTS API（fable/BBC RP），降级 en-GB ──
+  // ── TTS helpers：中文普通话 + 英文 BBC RP（fable/en-GB）──
   const speakText = (text: string) => {
-    // 非阻塞调用：先尝试高质量 TTS API，失败自动降级
-    speakBritish(text).catch(() => {});
+    // 混合语言朗读：中文段用普通话，英文段用 TTS fable + en-GB
+    speakMixed(text).catch(() => {});
   };
 
   const chatBoxRef = useRef<HTMLDivElement>(null);
@@ -1310,7 +1381,19 @@ function SpeakingPractice({
         )}
         {progress.completed && <span className="pill">口语陪练已完成</span>}
       </div>
-      {progress.feedback && <p className="feedback">{progress.feedback}</p>}
+      {progress.feedback && (
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 14 }}>
+          <p className="feedback" style={{ flex: 1, margin: 0 }}>{progress.feedback}</p>
+          <button
+            className="bubble-speaker-btn"
+            onClick={() => speakMixed(progress.feedback).catch(() => {})}
+            title="朗读评价"
+            style={{ flexShrink: 0, marginTop: 2 }}
+          >
+            <Volume2 size={14} />
+          </button>
+        </div>
+      )}
     </section>
   );
 }
@@ -1911,7 +1994,8 @@ function ReviewCard({ item, mark }: { item: ReviewItem; mark: (id: string, maste
   }
 
   const speakAnswer = () => {
-    speakBritish(item.answer).catch(() => {});
+    // 口语类条目可能含中英混合说明，用 speakMixed 智能分语种朗读
+    speakMixed(item.answer).catch(() => {});
   };
 
   return (
@@ -2060,7 +2144,20 @@ function KnowledgeView({ state }: { state: AppState }) {
         <div className="chat-box" ref={chatBoxRef} style={{ height: 280 }}>
           {chatMessages.map((msg, idx) => (
             <div key={idx} className={`bubble ${msg.role}`}>
-              {msg.text}
+              {msg.role === "agent" ? (
+                <span className="bubble-agent-content">
+                  <span className="bubble-agent-text">{msg.text}</span>
+                  <button
+                    className="bubble-speaker-btn"
+                    onClick={() => speakMixed(msg.text).catch(() => {})}
+                    title="朗读（普通话 + 英式发音）"
+                  >
+                    <Volume2 size={14} />
+                  </button>
+                </span>
+              ) : (
+                msg.text
+              )}
             </div>
           ))}
           {chatLoading && (
