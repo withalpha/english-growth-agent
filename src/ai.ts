@@ -148,12 +148,12 @@ export async function generateDailyReport(state: AppState): Promise<Omit<DailyRe
   return fallback;
 }
 
-export async function requestTts(word: string): Promise<HTMLAudioElement | null> {
+export async function requestTts(text: string): Promise<HTMLAudioElement | null> {
   try {
     const response = await fetch("/api/ai/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ word }),
+      body: JSON.stringify({ text }),
     });
     if (!response.ok) return null;
     const blob = await response.blob();
@@ -186,5 +186,36 @@ export async function requestGenerateTheme(
     return theme;
   } catch {
     return null;
+  }
+}
+
+/**
+ * 从 Web Speech API 中查找英式英语音色（en-GB / BBC RP）。
+ * 返回找到的第一个 en-GB 语音，若未找到则返回 null。
+ */
+export function getUkVoice(): SpeechSynthesisVoice | null {
+  if (typeof window === "undefined" || !window.speechSynthesis) return null;
+  const voices = window.speechSynthesis.getVoices();
+  return voices.find((v) => v.lang === "en-GB") ?? null;
+}
+
+/**
+ * 英式发音朗读（BBC RP 标准）：
+ * 优先调用 TTS API（fable 音色），失败后降级到 Web Speech API en-GB。
+ */
+export async function speakBritish(text: string): Promise<void> {
+  const audio = await requestTts(text);
+  if (audio) {
+    await audio.play().catch(() => {});
+    return;
+  }
+  if (typeof window !== "undefined" && window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-GB";
+    utterance.rate = 0.9;
+    const ukVoice = getUkVoice();
+    if (ukVoice) utterance.voice = ukVoice;
+    window.speechSynthesis.speak(utterance);
   }
 }

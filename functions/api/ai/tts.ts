@@ -12,13 +12,13 @@ export async function onRequestPost(context: { request: Request; env: Env }) {
   const { request, env } = context;
   const body = await request.json().catch(() => ({}));
   const apiKey = String(env.OPENAI_API_KEY ?? "").trim();
-  const word = String((body as Record<string, unknown>).word ?? "").trim().slice(0, 200);
+  const text = String((body as Record<string, unknown>).text ?? (body as Record<string, unknown>).word ?? "").trim().slice(0, 1000);
 
   if (!apiKey) {
     return new Response("Missing OpenAI API key secret", { status: 503 });
   }
-  if (!word) {
-    return new Response("Missing word parameter", { status: 400 });
+  if (!text) {
+    return new Response("Missing text parameter", { status: 400 });
   }
 
   try {
@@ -30,8 +30,8 @@ export async function onRequestPost(context: { request: Request; env: Env }) {
       },
       body: JSON.stringify({
         model: "tts-1",
-        voice: "alloy",
-        input: word,
+        voice: "fable",
+        input: text,
         response_format: "mp3",
       }),
     });

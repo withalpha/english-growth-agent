@@ -70,6 +70,39 @@ const todayPlan = [
   { title: "集中复习总结", target: "复习薄弱项", description: "复盘错词、错句和高频问题，继续滚动巩固" },
 ];
 
+/** 选取最接近 BBC RP 的英式语音（en-GB） */
+const getUkVoice = (): SpeechSynthesisVoice | null => {
+  if (!window.speechSynthesis) return null;
+  const voices = window.speechSynthesis.getVoices();
+  return (
+    voices.find((v) => v.lang === "en-GB" && v.name.toLowerCase().includes("google")) ??
+    voices.find((v) => v.lang === "en-GB" && !v.name.toLowerCase().includes("india")) ??
+    voices.find((v) => v.lang === "en-GB") ??
+    null
+  );
+};
+
+/**
+ * 用英式发音朗读文本。
+ * 优先调用 TTS API（fable 声线，BBC RP），失败后降级到浏览器 en-GB 语音。
+ * 适用于 AI 对话气泡、复习卡片、知识库等场景。
+ */
+const speakBritish = async (text: string): Promise<void> => {
+  const audio = await requestTts(text);
+  if (audio) {
+    audio.play().catch(() => {});
+    return;
+  }
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.lang = "en-GB";
+  utt.rate = 0.9;
+  const ukVoice = getUkVoice();
+  if (ukVoice) utt.voice = ukVoice;
+  window.speechSynthesis.speak(utt);
+};
+
 const getDayIndex = () => Math.floor(new Date(getTodayKey()).getTime() / 86400000);
 
 const getTodayTheme = () => dailyThemes[getDayIndex() % dailyThemes.length];
@@ -847,10 +880,12 @@ function VocabularyPractice({
           setIsSpeaking(false);
         });
       } else if (!cancelled && window.speechSynthesis) {
-        // Fallback: Web Speech API for local file usage
+        // Fallback: Web Speech API with British English (en-GB / BBC RP)
         const utterance = new SpeechSynthesisUtterance(card.word);
-        utterance.lang = "en-US";
+        utterance.lang = "en-GB";
         utterance.rate = 0.85;
+        const ukVoice = getUkVoice();
+        if (ukVoice) utterance.voice = ukVoice;
         setIsSpeaking(true);
         utterance.onend = () => setIsSpeaking(false);
         utterance.onerror = () => setIsSpeaking(false);
@@ -892,12 +927,14 @@ function VocabularyPractice({
       await audio.play().catch(() => setIsSpeaking(false));
       return true;
     }
-    // Fallback: Web Speech API (works locally)
+    // Fallback: Web Speech API with British English (en-GB / BBC RP)
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(word);
-      utterance.lang = "en-US";
+      utterance.lang = "en-GB";
       utterance.rate = 0.85;
+      const ukVoice = getUkVoice();
+      if (ukVoice) utterance.voice = ukVoice;
       setIsSpeaking(true);
       utterance.onend = () => setIsSpeaking(false);
       utterance.onerror = () => setIsSpeaking(false);
@@ -1073,14 +1110,10 @@ function SpeakingPractice({
   const userTurns = progress.messages.filter((message) => message.role === "user").length;
   const canUnlockWriting = userTurns >= DAILY_SPEAKING_TARGET && Boolean(progress.feedback.trim());
 
-  // ── TTS helpers ──
+  // ── TTS helpers：优先 TTS API（fable/BBC RP），降级 en-GB ──
   const speakText = (text: string) => {
-    if (!window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-US";
-    utterance.rate = 0.9;
-    window.speechSynthesis.speak(utterance);
+    // 非阻塞调用：先尝试高质量 TTS API，失败自动降级
+    speakBritish(text).catch(() => {});
   };
 
   const chatBoxRef = useRef<HTMLDivElement>(null);
@@ -1333,12 +1366,7 @@ function WritingPractice({
   }, [progress.index]);
 
   const speakText = (text: string) => {
-    if (!window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-US";
-    utterance.rate = 0.9;
-    window.speechSynthesis.speak(utterance);
+    speakBritish(text).catch(() => {});
   };
 
   const tokenLabel = (t: string) => t.split("|")[0];
@@ -1728,13 +1756,7 @@ function VocabReviewPractice({
   const isCorrect = answered && selected === correctAnswer;
 
   const speakWord = () => {
-    if (window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-      const utt = new SpeechSynthesisUtterance(word);
-      utt.lang = "en-US";
-      utt.rate = 0.9;
-      window.speechSynthesis.speak(utt);
-    }
+    speakBritish(word).catch(() => {});
   };
 
   const choose = (option: string) => {
@@ -1889,13 +1911,7 @@ function ReviewCard({ item, mark }: { item: ReviewItem; mark: (id: string, maste
   }
 
   const speakAnswer = () => {
-    if (window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-      const utt = new SpeechSynthesisUtterance(item.answer);
-      utt.lang = "en-US";
-      utt.rate = 0.9;
-      window.speechSynthesis.speak(utt);
-    }
+    speakBritish(item.answer).catch(() => {});
   };
 
   return (
