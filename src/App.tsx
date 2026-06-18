@@ -795,6 +795,25 @@ function VocabularyPractice({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
 
+  // 控制"继续"按钮：AI 反馈到达后解锁，最多等待 10 秒
+  const [canContinue, setCanContinue] = useState(false);
+
+  // 换题时重置
+  useEffect(() => {
+    setCanContinue(false);
+  }, [progress.index]);
+
+  // AI 反馈到达 → 立即解锁；超过 10 秒还没到 → 强制解锁
+  useEffect(() => {
+    if (!progress.answered) return;
+    if (progress.feedback) {
+      setCanContinue(true);
+      return;
+    }
+    const timer = setTimeout(() => setCanContinue(true), 10000);
+    return () => clearTimeout(timer);
+  }, [progress.answered, progress.feedback]);
+
   const options = useMemo(() => {
     const pool = cards
       .filter((item) => item.word !== card.word)
@@ -1012,17 +1031,18 @@ function VocabularyPractice({
               <button
                 className="primary vocab-continue-btn"
                 onClick={nextQuestion}
-                disabled={progress.index >= DAILY_VOCABULARY_TARGET - 1}
+                disabled={!canContinue || progress.index >= DAILY_VOCABULARY_TARGET - 1}
               >
-                继续
+                {canContinue ? "继续" : "AI 分析中…"}
               </button>
             )}
             {canUnlockSpeaking && !progress.completed && (
               <button
                 className="primary vocab-continue-btn"
                 onClick={() => updateProgress({ ...progress, completed: true })}
+                disabled={!canContinue}
               >
-                <CheckCircle2 size={18} /> 进入口语陪练
+                <CheckCircle2 size={18} /> {canContinue ? "进入口语陪练" : "AI 分析中…"}
               </button>
             )}
             {progress.completed && <span className="pill">词汇互动已完成</span>}
