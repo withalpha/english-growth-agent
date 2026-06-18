@@ -5,6 +5,7 @@ import {
   ClipboardCheck,
   FileText,
   Library,
+  LogOut,
   Mic,
   RotateCcw,
   Send,
@@ -172,6 +173,25 @@ const speakMixed = async (text: string): Promise<void> => {
       }
     }
   }
+};
+
+/** 从名称或邮箱提取最多2个字母的缩写作为头像文字 */
+const getInitials = (nameOrEmail: string): string => {
+  const base = nameOrEmail.split("@")[0];
+  const parts = base.split(/[.\-_\s]+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return base.slice(0, 2).toUpperCase();
+};
+
+/** 根据邮箱字符串哈希生成一致的头像背景色 */
+const getAvatarColor = (email: string): string => {
+  const palette = [
+    "#2f8a43", "#1a6e8a", "#7a3f9e", "#8a5a1a",
+    "#1a7a6e", "#8a1a4a", "#3f7a1a", "#1a4a8a",
+  ];
+  let h = 0;
+  for (let i = 0; i < email.length; i++) h = email.charCodeAt(i) + ((h << 5) - h);
+  return palette[Math.abs(h) % palette.length];
 };
 
 const getDayIndex = () => Math.floor(new Date(getTodayKey()).getTime() / 86400000);
@@ -367,11 +387,112 @@ export function App() {
           </button>
         </nav>
         {currentUser.authenticated && (
-          <div style={{ padding: "10px 16px", borderRadius: 8, background: "#1a2e1e", border: "1px solid #3a4e3c" }}>
-            <span style={{ color: "#b8c8b6", fontSize: 12, display: "block" }}>当前用户</span>
-            <strong style={{ display: "block", fontSize: 13, marginTop: 4, color: "#e8f0e5", wordBreak: "break-all" }}>
-              {currentUser.email}
-            </strong>
+          <div
+            style={{
+              padding: "14px 14px 12px",
+              borderRadius: 14,
+              background: "linear-gradient(145deg, #1e3524, #263c2a)",
+              border: "1px solid #3d5440",
+              boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+            }}
+          >
+            {/* 头像 + 信息 */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 11 }}>
+              {/* 头像圆圈 */}
+              <div
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: "50%",
+                  background: getAvatarColor(currentUser.email ?? ""),
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 13,
+                  fontWeight: 800,
+                  color: "#fff",
+                  flexShrink: 0,
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+                  letterSpacing: "0.5px",
+                }}
+              >
+                {getInitials(currentUser.name ?? currentUser.email ?? "?")}
+              </div>
+              {/* 名称 + 邮箱 */}
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <strong
+                  style={{
+                    display: "block",
+                    fontSize: 13,
+                    color: "#e8f5e5",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    lineHeight: 1.3,
+                  }}
+                >
+                  {currentUser.name ?? currentUser.email?.split("@")[0] ?? "用户"}
+                </strong>
+                <span
+                  style={{
+                    display: "block",
+                    fontSize: 10,
+                    color: "#7aad85",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    marginTop: 2,
+                    lineHeight: 1.3,
+                  }}
+                >
+                  {currentUser.email}
+                </span>
+              </div>
+              {/* 在线绿点 */}
+              <div
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: "#67c85d",
+                  flexShrink: 0,
+                  boxShadow: "0 0 6px rgba(103,200,93,0.6)",
+                }}
+              />
+            </div>
+            {/* 退出登录按钮 */}
+            <button
+              onClick={() => { window.location.href = "/cdn-cgi/access/logout"; }}
+              style={{
+                width: "100%",
+                minHeight: "unset",
+                height: 28,
+                fontSize: 12,
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid #4a6050",
+                color: "#8aba94",
+                borderRadius: 8,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 5,
+                transition: "background 160ms ease, border-color 160ms ease, color 160ms ease",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background = "rgba(207,93,59,0.15)";
+                (e.currentTarget as HTMLButtonElement).style.borderColor = "#cf5d3b";
+                (e.currentTarget as HTMLButtonElement).style.color = "#e87a60";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.04)";
+                (e.currentTarget as HTMLButtonElement).style.borderColor = "#4a6050";
+                (e.currentTarget as HTMLButtonElement).style.color = "#8aba94";
+              }}
+            >
+              <LogOut size={11} />
+              退出登录
+            </button>
           </div>
         )}
         <div className="side-stat">
