@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>英语快速学习小课堂</title>
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #f5f7f3;
+        font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      }
+
+      .card {
+        background: #fff;
+        border: 1px solid #dfe7dc;
+        border-radius: 16px;
+        padding: 48px 40px 40px;
+        width: 100%;
+        max-width: 400px;
+        box-shadow: 0 8px 32px rgba(47, 138, 67, 0.08);
+        text-align: center;
+      }
+
+      .logo {
+        width: 52px;
+        height: 52px;
+        border-radius: 12px;
+        background: #172018;
+        color: #67c85d;
+        font-size: 20px;
+        font-weight: 900;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 20px;
+        letter-spacing: -1px;
+      }
+
+      h1 {
+        font-size: 22px;
+        font-weight: 700;
+        color: #172018;
+        margin-bottom: 6px;
+        letter-spacing: -0.3px;
+      }
+
+      .subtitle {
+        font-size: 13px;
+        color: #8fa98d;
+        margin-bottom: 32px;
+      }
+
+      /* Cloudflare Access 会把登录表单注入到 #cf-access-error 后面 */
+      #cf-access-error {
+        color: #cf5d3b;
+        font-size: 13px;
+        margin-bottom: 12px;
+        min-height: 0;
+      }
+
+      /* 覆盖 Cloudflare 默认表单样式，保持简约风格 */
+      #cf-login-form label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        color: #667461;
+        text-align: left;
+        margin-bottom: 6px;
+      }
+
+      #cf-login-form input[type="email"] {
+        width: 100%;
+        border: 1px solid #cdd8c9;
+        border-radius: 8px;
+        padding: 11px 14px;
+        font-size: 14px;
+        color: #172018;
+        outline: none;
+        margin-bottom: 14px;
+        transition: border-color 160ms;
+      }
+
+      #cf-login-form input[type="email"]:focus {
+        border-color: #2f8a43;
+        box-shadow: 0 0 0 3px rgba(47, 138, 67, 0.12);
+      }
+
+      #cf-login-form button[type="submit"],
+      #cf-login-form input[type="submit"] {
+        width: 100%;
+        background: #2f8a43;
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        padding: 12px;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 160ms;
+      }
+
+      #cf-login-form button[type="submit"]:hover,
+      #cf-login-form input[type="submit"]:hover {
+        background: #267338;
+      }
+
+      .footer {
+        margin-top: 28px;
+        font-size: 11px;
+        color: #b8c8b6;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="logo">EN</div>
+      <h1>欢迎使用英语快速学习小课堂</h1>
+      <p class="subtitle">请用你的邮箱登录，开始今日学习</p>
+
+      <!-- Cloudflare Access 错误提示注入点 -->
+      <div id="cf-access-error"></div>
+
+      <!-- Cloudflare Access 会在此渲染登录表单 -->
+      <div id="cf-login-form"></div>
+
+      <p class="footer">由 Cloudflare Zero Trust 提供安全保障</p>
+    </div>
+  </body>
+</html>
