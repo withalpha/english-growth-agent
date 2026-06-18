@@ -216,6 +216,42 @@ export const makeDailyReport = (report: Omit<DailyReport, "id">): DailyReport =>
   id: createId(),
 });
 
+/** localStorage 中记录当前数据所属用户邮箱的 key */
+const USER_EMAIL_KEY = "english-growth-agent-user-email";
+
+/**
+ * 读取 localStorage 中记录的数据归属邮箱。
+ * 用于判断当前浏览器本地数据是否属于当前登录用户。
+ */
+export const getStoredUserEmail = (): string | null => {
+  try {
+    return localStorage.getItem(USER_EMAIL_KEY);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * 在 localStorage 中标记当前数据归属的用户邮箱。
+ * 每次确认用户身份后调用，确保后续切换账号时能检测到。
+ */
+export const markStateOwner = (email: string): void => {
+  try {
+    localStorage.setItem(USER_EMAIL_KEY, email);
+  } catch {}
+};
+
+/**
+ * 清除本地 localStorage 中的学习数据和归属标记。
+ * 当检测到不同用户登录同一浏览器时调用，防止数据污染。
+ */
+export const clearLocalState = (): void => {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(USER_EMAIL_KEY);
+  } catch {}
+};
+
 export const getTodayKey = todayKey;
 
 // ── 云端存储（Cloudflare KV，按用户隔离）──

@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { areaLabels, dailyThemes, vocabularyCards } from "./data";
 import { generateDailyReport, requestAiFeedback, requestAiReply, requestGenerateTheme, requestTts } from "./ai";
-import { getCurrentUser, getTodayKey, loadState, loadStateFromCloud, makeDailyReport, makeKnowledgeEntry, makeReviewItem, saveState, saveStateToCloud } from "./storage";
+import { clearLocalState, defaultState, getCurrentUser, getStoredUserEmail, getTodayKey, loadState, loadStateFromCloud, makeDailyReport, makeKnowledgeEntry, makeReviewItem, markStateOwner, saveState, saveStateToCloud } from "./storage";
 import type { AppState, ChatMessage, DailyTheme, ReviewItem, SkillArea } from "./types";
 
 type Tab = "today" | "diagnosis" | "review" | "knowledge" | "reports";
@@ -258,16 +258,36 @@ export function App() {
   }>({ email: null, name: null, authenticated: false });
 
   // 启动时：加载用户信息 + 从云端同步最新状态（云端为权威数据源）
-  // 注意：loadStateFromCloud() 内部已应用新的一天重置逻辑，无需在此重复处理
+  // 同时检测是否切换了账号，若切换则清空本地旧账号数据，防止数据污染
   useEffect(() => {
     let cancelled = false;
     Promise.all([getCurrentUser(), loadStateFromCloud()]).then(([user, cloudState]) => {
       if (cancelled) return;
       setCurrentUser(user);
-      if (cloudState) {
-        // 云端数据已在 loadStateFromCloud 内部做了日期重置处理，直接应用
-        setState(cloudState);
-        saveState(cloudState);
+
+      if (user.authenticated && user.email) {
+        const storedEmail = getStoredUserEmail();
+        const isSameUser = storedEmail === user.email;
+
+        if (!isSameUser) {
+          // 不同账号登录了同一浏览器 → 清空本地旧数据，防止数据污染
+          clearLocalState();
+        }
+
+        // 将当前用户邮箱写入 localStorage，供下次加载时校验
+        markStateOwner(user.email);
+
+        if (cloudState) {
+          // 云端有此用户的数据，直接应用（内部已处理日期重置）
+          setState(cloudState);
+          saveState(cloudState);
+        } else if (!isSameUser) {
+          // 新用户且云端无数据 → 从零开始，不继承前一个用户的本地数据
+          const fresh = defaultState();
+          setState(fresh);
+          saveState(fresh);
+        }
+        // 同一用户且云端无数据 → 继续使用本地 localStorage（正常情况）
       }
     });
     return () => { cancelled = true; };
